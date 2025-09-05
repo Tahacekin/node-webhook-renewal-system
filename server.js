@@ -22,17 +22,33 @@ app.use(session({
 }));
 
 // Database connection
-const sequelize = new Sequelize(
-  process.env.DB_NAME || 'webhook_renewal',
-  process.env.DB_USER || 'webhook_user',
-  process.env.DB_PASSWORD || 'your_secure_password',
-  {
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 5432,
+let sequelize;
+if (process.env.DATABASE_URL) {
+  // Production (Heroku) - use DATABASE_URL
+  sequelize = new Sequelize(process.env.DATABASE_URL, {
     dialect: 'postgres',
-    logging: false
-  }
-);
+    logging: false,
+    dialectOptions: {
+      ssl: {
+        require: true,
+        rejectUnauthorized: false
+      }
+    }
+  });
+} else {
+  // Development - use individual variables
+  sequelize = new Sequelize(
+    process.env.DB_NAME || 'webhook_renewal',
+    process.env.DB_USER || 'webhook_user',
+    process.env.DB_PASSWORD || 'your_secure_password',
+    {
+      host: process.env.DB_HOST || 'localhost',
+      port: process.env.DB_PORT || 5432,
+      dialect: 'postgres',
+      logging: false
+    }
+  );
+}
 
 // Test database connection
 sequelize.authenticate()
@@ -46,11 +62,23 @@ sequelize.authenticate()
 // Microsoft Graph API configuration
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const APP_URL = process.env.APP_URL || 'https://node-webhook-mi3nuu5rt-taha-cekins-projects.vercel.app';
+const APP_URL = process.env.APP_URL || (process.env.NODE_ENV === 'production' ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN || 'your-app-name.up.railway.app'}` : 'http://localhost:3000');
 const REDIRECT_URI = `${APP_URL}/callback`;
 // Dynamic webhook URL based on environment
 const WEBHOOK_URL = process.env.WEBHOOK_URL || `${APP_URL}/webhook`;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+
+// FORENSIC LOGGING: Environment variables verification
+console.log('🔍 [ENV DEBUG] ===== ENVIRONMENT VARIABLES =====');
+console.log('🔍 [ENV DEBUG] NODE_ENV:', process.env.NODE_ENV);
+console.log('🔍 [ENV DEBUG] CLIENT_ID:', CLIENT_ID ? `${CLIENT_ID.substring(0, 8)}...${CLIENT_ID.substring(CLIENT_ID.length - 4)}` : 'UNDEFINED');
+console.log('🔍 [ENV DEBUG] CLIENT_SECRET:', CLIENT_SECRET ? `${CLIENT_SECRET.substring(0, 8)}...${CLIENT_SECRET.substring(CLIENT_SECRET.length - 4)}` : 'UNDEFINED');
+console.log('🔍 [ENV DEBUG] APP_URL:', APP_URL);
+console.log('🔍 [ENV DEBUG] REDIRECT_URI:', REDIRECT_URI);
+console.log('🔍 [ENV DEBUG] WEBHOOK_URL:', WEBHOOK_URL);
+console.log('🔍 [ENV DEBUG] WEBHOOK_SECRET:', WEBHOOK_SECRET ? `${WEBHOOK_SECRET.substring(0, 8)}...${WEBHOOK_SECRET.substring(WEBHOOK_SECRET.length - 4)}` : 'UNDEFINED');
+console.log('🔍 [ENV DEBUG] RAILWAY_PUBLIC_DOMAIN:', process.env.RAILWAY_PUBLIC_DOMAIN || 'UNDEFINED');
+console.log('🔍 [ENV DEBUG] =================================');
 
 // Helper function to get Graph client
 function getGraphClient(accessToken) {
@@ -62,6 +90,27 @@ function getGraphClient(accessToken) {
 }
 
 // Part 1: Authentication Routes
+
+// Authentication status check route
+app.get('/auth-status', (req, res) => {
+  console.log('🔍 [AUTH DEBUG] ===== AUTHENTICATION STATUS CHECK =====');
+  console.log('🔍 [AUTH DEBUG] Session ID:', req.sessionID);
+  console.log('🔍 [AUTH DEBUG] Has access token:', !!req.session.accessToken);
+  console.log('🔍 [AUTH DEBUG] Access token preview:', req.session.accessToken ? 
+    `${req.session.accessToken.substring(0, 10)}...${req.session.accessToken.substring(req.session.accessToken.length - 10)}` : 
+    'UNDEFINED');
+  console.log('🔍 [AUTH DEBUG] Session data:', JSON.stringify(req.session, null, 2));
+  console.log('🔍 [AUTH DEBUG] ======================================');
+  
+  res.json({
+    authenticated: !!req.session.accessToken,
+    hasToken: !!req.session.accessToken,
+    tokenPreview: req.session.accessToken ? 
+      `${req.session.accessToken.substring(0, 10)}...${req.session.accessToken.substring(req.session.accessToken.length - 10)}` : 
+      'UNDEFINED',
+    sessionId: req.sessionID
+  });
+});
 
 // Login route - redirects to Microsoft login
 app.get('/login', (req, res) => {
@@ -151,6 +200,130 @@ app.get('/fetch-emails', async (req, res) => {
 
 // Part 3: Webhook Implementation
 
+// Manual test route for debugging subscription creation
+app.get('/test-subscription', async (req, res) => {
+  console.log('🔍 [TEST DEBUG] ===== MANUAL SUBSCRIPTION TEST TRIGGERED =====');
+  console.log('🔍 [TEST DEBUG] Request from IP:', req.ip);
+  console.log('🔍 [TEST DEBUG] User-Agent:', req.get('User-Agent'));
+  console.log('🔍 [TEST DEBUG] ==============================================');
+  
+  if (!req.session.accessToken) {
+    console.log('🔍 [TEST DEBUG] ❌ No access token found - redirecting to login');
+    return res.redirect('/login');
+  }
+  
+  try {
+    console.log('🔍 [TEST DEBUG] Starting subscription creation test...');
+    
+    const graphClient = getGraphClient(req.session.accessToken);
+    
+    // FORENSIC LOGGING: Access token verification
+    const tokenPreview = req.session.accessToken ? 
+      `${req.session.accessToken.substring(0, 10)}...${req.session.accessToken.substring(req.session.accessToken.length - 10)}` : 
+      'UNDEFINED';
+    console.log('🔍 [TEST DEBUG] Access token preview:', tokenPreview);
+    
+    // Get user info to store with subscription
+    console.log('🔍 [TEST DEBUG] Fetching user info...');
+    const user = await graphClient.api('/me').get();
+    const userId = user.id;
+    console.log('🔍 [TEST DEBUG] User ID:', userId);
+    console.log('🔍 [TEST DEBUG] User display name:', user.displayName);
+    
+    // FORENSIC LOGGING: Request preparation
+    const requestBody = {
+      changeType: 'created',
+      notificationUrl: WEBHOOK_URL,
+      resource: '/me/messages',
+      expirationDateTime: new Date(Date.now() + 1 * 60 * 1000).toISOString(), // 1 minute for testing
+      clientState: WEBHOOK_SECRET
+    };
+    
+    console.log('🔍 [TEST DEBUG] ===== MICROSOFT GRAPH REQUEST DETAILS =====');
+    console.log('🔍 [TEST DEBUG] Endpoint URL: https://graph.microsoft.com/v1.0/subscriptions');
+    console.log('🔍 [TEST DEBUG] Request Headers:');
+    console.log('🔍 [TEST DEBUG] - Authorization: Bearer', tokenPreview);
+    console.log('🔍 [TEST DEBUG] - Content-Type: application/json');
+    console.log('🔍 [TEST DEBUG] Request Body:', JSON.stringify(requestBody, null, 2));
+    console.log('🔍 [TEST DEBUG] ===========================================');
+    
+    // Create a subscription for new mail notifications
+    console.log('🔍 [TEST DEBUG] Making API call to Microsoft Graph...');
+    const subscription = await graphClient
+      .api('/subscriptions')
+      .post(requestBody);
+    
+    console.log('🔍 [TEST DEBUG] ✅ Subscription created successfully!');
+    console.log('🔍 [TEST DEBUG] Subscription ID:', subscription.id);
+    console.log('🔍 [TEST DEBUG] Expiration:', subscription.expirationDateTime);
+    
+    // Store subscription in database
+    console.log('🔍 [TEST DEBUG] Storing subscription in database...');
+    const dbSubscription = await Subscription.create({
+      subscriptionId: subscription.id,
+      expirationDateTime: new Date(subscription.expirationDateTime),
+      userId: userId
+    });
+    console.log('🔍 [TEST DEBUG] ✅ Database record created with ID:', dbSubscription.id);
+    
+    // Store subscription ID in session for management
+    req.session.subscriptionId = subscription.id;
+    
+    res.json({
+      success: true,
+      message: 'Subscription created successfully via test route',
+      subscription: {
+        id: subscription.id,
+        expirationDateTime: subscription.expirationDateTime
+      },
+      user: {
+        id: userId,
+        displayName: user.displayName
+      },
+      debug: {
+        webhookUrl: WEBHOOK_URL,
+        appUrl: APP_URL,
+        clientId: CLIENT_ID ? `${CLIENT_ID.substring(0, 8)}...${CLIENT_ID.substring(CLIENT_ID.length - 4)}` : 'UNDEFINED'
+      }
+    });
+  } catch (error) {
+    console.error('🔍 [TEST DEBUG] ===== MICROSOFT GRAPH ERROR DETAILS =====');
+    console.error('🔍 [TEST DEBUG] Error type:', error.constructor.name);
+    console.error('🔍 [TEST DEBUG] Error message:', error.message);
+    console.error('🔍 [TEST DEBUG] Error status:', error.statusCode || 'N/A');
+    console.error('🔍 [TEST DEBUG] Error code:', error.code || 'N/A');
+    console.error('🔍 [TEST DEBUG] Error requestId:', error.requestId || 'N/A');
+    console.error('🔍 [TEST DEBUG] Full error object:', JSON.stringify(error, null, 2));
+    
+    // Check for nested error details
+    if (error.response) {
+      console.error('🔍 [TEST DEBUG] Response status:', error.response.status);
+      console.error('🔍 [TEST DEBUG] Response headers:', error.response.headers);
+      console.error('🔍 [TEST DEBUG] Response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
+    if (error.body) {
+      console.error('🔍 [TEST DEBUG] Error body:', JSON.stringify(error.body, null, 2));
+    }
+    
+    console.error('🔍 [TEST DEBUG] =========================================');
+    
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to create subscription via test route',
+      details: error.message,
+      debug: {
+        type: error.constructor.name,
+        status: error.statusCode,
+        code: error.code,
+        requestId: error.requestId,
+        webhookUrl: WEBHOOK_URL,
+        appUrl: APP_URL
+      }
+    });
+  }
+});
+
 // Create subscription endpoint
 app.post('/create-subscription', async (req, res) => {
   if (!req.session.accessToken) {
@@ -160,27 +333,53 @@ app.post('/create-subscription', async (req, res) => {
   try {
     const graphClient = getGraphClient(req.session.accessToken);
     
+    // FORENSIC LOGGING: Access token verification
+    const tokenPreview = req.session.accessToken ? 
+      `${req.session.accessToken.substring(0, 10)}...${req.session.accessToken.substring(req.session.accessToken.length - 10)}` : 
+      'UNDEFINED';
+    console.log('🔍 [SUBSCRIPTION DEBUG] Access token preview:', tokenPreview);
+    
     // Get user info to store with subscription
+    console.log('🔍 [SUBSCRIPTION DEBUG] Fetching user info...');
     const user = await graphClient.api('/me').get();
     const userId = user.id;
+    console.log('🔍 [SUBSCRIPTION DEBUG] User ID:', userId);
+    
+    // FORENSIC LOGGING: Request preparation
+    const requestBody = {
+      changeType: 'created',
+      notificationUrl: WEBHOOK_URL,
+      resource: '/me/messages',
+      expirationDateTime: new Date(Date.now() + 1 * 60 * 1000).toISOString(), // 1 minute for testing
+      clientState: WEBHOOK_SECRET
+    };
+    
+    console.log('🔍 [SUBSCRIPTION DEBUG] ===== MICROSOFT GRAPH REQUEST DETAILS =====');
+    console.log('🔍 [SUBSCRIPTION DEBUG] Endpoint URL: https://graph.microsoft.com/v1.0/subscriptions');
+    console.log('🔍 [SUBSCRIPTION DEBUG] Request Headers:');
+    console.log('🔍 [SUBSCRIPTION DEBUG] - Authorization: Bearer', tokenPreview);
+    console.log('🔍 [SUBSCRIPTION DEBUG] - Content-Type: application/json');
+    console.log('🔍 [SUBSCRIPTION DEBUG] Request Body:', JSON.stringify(requestBody, null, 2));
+    console.log('🔍 [SUBSCRIPTION DEBUG] ===========================================');
     
     // Create a subscription for new mail notifications
+    console.log('🔍 [SUBSCRIPTION DEBUG] Making API call to Microsoft Graph...');
     const subscription = await graphClient
       .api('/subscriptions')
-      .post({
-        changeType: 'created',
-        notificationUrl: WEBHOOK_URL,
-        resource: '/me/messages',
-        expirationDateTime: new Date(Date.now() + 1 * 60 * 1000).toISOString(), // 1 minute for testing
-        clientState: WEBHOOK_SECRET
-      });
+      .post(requestBody);
+    
+    console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Subscription created successfully!');
+    console.log('🔍 [SUBSCRIPTION DEBUG] Subscription ID:', subscription.id);
+    console.log('🔍 [SUBSCRIPTION DEBUG] Expiration:', subscription.expirationDateTime);
     
     // Store subscription in database
+    console.log('🔍 [SUBSCRIPTION DEBUG] Storing subscription in database...');
     const dbSubscription = await Subscription.create({
       subscriptionId: subscription.id,
       expirationDateTime: new Date(subscription.expirationDateTime),
       userId: userId
     });
+    console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Database record created with ID:', dbSubscription.id);
     
     // Store subscription ID in session for management
     req.session.subscriptionId = subscription.id;
@@ -193,21 +392,56 @@ app.post('/create-subscription', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error creating subscription:', error);
+    console.error('🔍 [SUBSCRIPTION DEBUG] ===== MICROSOFT GRAPH ERROR DETAILS =====');
+    console.error('🔍 [SUBSCRIPTION DEBUG] Error type:', error.constructor.name);
+    console.error('🔍 [SUBSCRIPTION DEBUG] Error message:', error.message);
+    console.error('🔍 [SUBSCRIPTION DEBUG] Error status:', error.statusCode || 'N/A');
+    console.error('🔍 [SUBSCRIPTION DEBUG] Error code:', error.code || 'N/A');
+    console.error('🔍 [SUBSCRIPTION DEBUG] Error requestId:', error.requestId || 'N/A');
+    console.error('🔍 [SUBSCRIPTION DEBUG] Full error object:', JSON.stringify(error, null, 2));
+    
+    // Check for nested error details
+    if (error.response) {
+      console.error('🔍 [SUBSCRIPTION DEBUG] Response status:', error.response.status);
+      console.error('🔍 [SUBSCRIPTION DEBUG] Response headers:', error.response.headers);
+      console.error('🔍 [SUBSCRIPTION DEBUG] Response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
+    if (error.body) {
+      console.error('🔍 [SUBSCRIPTION DEBUG] Error body:', JSON.stringify(error.body, null, 2));
+    }
+    
+    console.error('🔍 [SUBSCRIPTION DEBUG] =========================================');
+    
     res.status(500).json({ 
       error: 'Failed to create subscription',
-      details: error.message 
+      details: error.message,
+      debug: {
+        type: error.constructor.name,
+        status: error.statusCode,
+        code: error.code,
+        requestId: error.requestId
+      }
     });
   }
 });
 
 // Webhook endpoint for receiving notifications
 app.post('/webhook', async (req, res) => {
+  console.log('🔍 [WEBHOOK DEBUG] ===== WEBHOOK REQUEST RECEIVED =====');
+  console.log('🔍 [WEBHOOK DEBUG] Method:', req.method);
+  console.log('🔍 [WEBHOOK DEBUG] URL:', req.url);
+  console.log('🔍 [WEBHOOK DEBUG] Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('🔍 [WEBHOOK DEBUG] Query params:', JSON.stringify(req.query, null, 2));
+  console.log('🔍 [WEBHOOK DEBUG] Body:', JSON.stringify(req.body, null, 2));
+  
   const validationToken = req.query.validationToken;
   
   // Handle initial validation request
   if (validationToken) {
-    console.log('Webhook validation request received');
+    console.log('🔍 [WEBHOOK DEBUG] ✅ Validation token received:', validationToken);
+    console.log('🔍 [WEBHOOK DEBUG] Responding with 200 OK and validation token');
+    res.setHeader('Content-Type', 'text/plain');
     return res.status(200).send(validationToken);
   }
   
