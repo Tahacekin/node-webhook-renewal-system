@@ -440,11 +440,24 @@ app.get('/callback', async (req, res) => {
     
     console.log('🔍 [CALLBACK DEBUG] ✅ Token exchange successful');
     console.log('🔍 [CALLBACK DEBUG] Response status:', tokenResponse.status);
+    console.log('🔍 [CALLBACK DEBUG] Full response data:', JSON.stringify(tokenResponse.data, null, 2));
     
-    const { access_token, refresh_token } = tokenResponse.data;
+    // First, check if the server sent back an error object
+    if (tokenResponse.data.error) {
+      console.error('🔍 [CALLBACK DEBUG] ❌ OAuth Error Response:');
+      console.error('🔍 [CALLBACK DEBUG] Error:', tokenResponse.data.error);
+      console.error('🔍 [CALLBACK DEBUG] Error Description:', tokenResponse.data.error_description);
+      console.error('🔍 [CALLBACK DEBUG] Error URI:', tokenResponse.data.error_uri);
+      
+      throw new Error(`OAuth Error: ${tokenResponse.data.error} - ${tokenResponse.data.error_description}`);
+    }
+    
+    // If no error, safely destructure the response
+    const { access_token, refresh_token, expires_in } = tokenResponse.data;
     
     console.log('🔍 [CALLBACK DEBUG] Access token preview:', access_token ? `${access_token.substring(0, 10)}...${access_token.substring(access_token.length - 10)}` : 'UNDEFINED');
     console.log('🔍 [CALLBACK DEBUG] Refresh token preview:', refresh_token ? `${refresh_token.substring(0, 10)}...${refresh_token.substring(refresh_token.length - 10)}` : 'UNDEFINED');
+    console.log('🔍 [CALLBACK DEBUG] Expires in:', expires_in, 'seconds');
     
     // Check if refresh token is available
     if (!refresh_token) {
@@ -471,12 +484,39 @@ app.get('/callback', async (req, res) => {
     res.redirect('/dashboard');
   } catch (error) {
     console.error('🔍 [CALLBACK DEBUG] ❌ Token exchange error:');
-    console.error('🔍 [CALLBACK DEBUG] Error status:', error.response?.status);
-    console.error('🔍 [CALLBACK DEBUG] Error data:', error.response?.data);
+    console.error('🔍 [CALLBACK DEBUG] Error type:', error.constructor.name);
     console.error('🔍 [CALLBACK DEBUG] Error message:', error.message);
+    console.error('🔍 [CALLBACK DEBUG] Error status:', error.response?.status);
+    console.error('🔍 [CALLBACK DEBUG] Error status text:', error.response?.statusText);
+    console.error('🔍 [CALLBACK DEBUG] Error headers:', error.response?.headers);
+    console.error('🔍 [CALLBACK DEBUG] Error data:', JSON.stringify(error.response?.data, null, 2));
+    console.error('🔍 [CALLBACK DEBUG] Full error object:', error);
     console.error('🔍 [CALLBACK DEBUG] ======================================');
     
-    res.status(500).json({ error: 'Token exchange failed', details: error.message });
+    // Provide more specific error messages based on the error type
+    let errorMessage = 'Token exchange failed';
+    let errorDetails = error.message;
+    
+    if (error.response?.data?.error) {
+      errorMessage = `OAuth Error: ${error.response.data.error}`;
+      errorDetails = error.response.data.error_description || error.response.data.error;
+    } else if (error.response?.status === 400) {
+      errorMessage = 'Bad Request - Check your OAuth configuration';
+      errorDetails = 'Invalid client credentials, redirect URI, or authorization code';
+    } else if (error.response?.status === 401) {
+      errorMessage = 'Unauthorized - Invalid client credentials';
+      errorDetails = 'Check your CLIENT_ID and CLIENT_SECRET';
+    }
+    
+    res.status(500).json({ 
+      error: errorMessage, 
+      details: errorDetails,
+      debug: {
+        status: error.response?.status,
+        oauthError: error.response?.data?.error,
+        oauthDescription: error.response?.data?.error_description
+      }
+    });
   }
 });
 
