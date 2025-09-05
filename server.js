@@ -714,13 +714,18 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
             headers: {
               'Authorization': `Bearer ${validToken}`,
               'Content-Type': 'application/json'
+            },
+            params: {
+              $select: 'id,displayName,userPrincipalName'
             }
           });
           console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Basic /me test successful');
+          console.log('🔍 [SUBSCRIPTION DEBUG] Test response data:', testResponse.data);
         } catch (testError) {
           console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Basic /me test failed:');
           console.error('🔍 [SUBSCRIPTION DEBUG] Test error status:', testError.response?.status);
           console.error('🔍 [SUBSCRIPTION DEBUG] Test error data:', testError.response?.data);
+          console.error('🔍 [SUBSCRIPTION DEBUG] Test error headers:', testError.response?.headers);
           throw testError;
         }
         
@@ -729,6 +734,9 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
           headers: {
             'Authorization': `Bearer ${validToken}`,
             'Content-Type': 'application/json'
+          },
+          params: {
+            $select: 'id,displayName,userPrincipalName'
           }
         });
         
