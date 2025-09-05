@@ -7,6 +7,7 @@ const path = require('path');
 const { Sequelize } = require('sequelize');
 const { Subscription } = require('./models');
 const renewalService = require('./services/renewalService');
+const { getValidAccessToken, testTokenValidity } = require('./utils/auth');
 require('dotenv').config();
 
 const app = express();
@@ -454,6 +455,12 @@ app.get('/callback', async (req, res) => {
     req.session.accessToken = access_token;
     req.session.refreshToken = refresh_token;
     
+    // Calculate and store expiration time (typically 1 hour from now)
+    const expiresAt = new Date(Date.now() + (expires_in * 1000));
+    req.session.tokenExpiresAt = expiresAt.toISOString();
+    
+    console.log('🔍 [CALLBACK DEBUG] Token expires at:', expiresAt.toISOString());
+    
     console.log('🔍 [CALLBACK DEBUG] ✅ Tokens stored in session');
     console.log('🔍 [CALLBACK DEBUG] Session after token storage:', JSON.stringify(req.session, null, 2));
     console.log('🔍 [CALLBACK DEBUG] Session ID after storage:', req.sessionID);
@@ -479,12 +486,15 @@ app.get('/callback', async (req, res) => {
 app.get('/fetch-emails', requireAuth, async (req, res) => {
   try {
     console.log('🔍 [FETCH EMAILS] ===== FETCHING EMAILS =====');
-    console.log('🔍 [FETCH EMAILS] Using direct API approach...');
     
-    // Use direct axios call instead of complex token refresh
+    // Get a valid access token (refresh if necessary)
+    const validToken = await getValidAccessToken(req);
+    console.log('🔍 [FETCH EMAILS] Using valid token for API call...');
+    
+    // Use direct axios call with refreshed token
     const response = await axios.get('https://graph.microsoft.com/v1.0/me/messages', {
       headers: {
-        'Authorization': `Bearer ${req.session.accessToken}`,
+        'Authorization': `Bearer ${validToken}`,
         'Content-Type': 'application/json'
       },
       params: {
@@ -650,60 +660,21 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
         console.log('🔍 [SUBSCRIPTION DEBUG] Fetching user info...');
         console.log('🔍 [SUBSCRIPTION DEBUG] Testing token with /me endpoint...');
         
-        // First, let's test if we can access the user's profile
-        console.log('🔍 [SUBSCRIPTION DEBUG] Testing basic user access...');
-        try {
-          const profileResponse = await axios.get('https://graph.microsoft.com/v1.0/me/profile', {
-            headers: {
-              'Authorization': `Bearer ${req.session.accessToken}`,
-              'Content-Type': 'application/json'
-            }
-          });
-          console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Profile call successful');
-        } catch (profileError) {
-          console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Profile call failed:', profileError.response?.status);
-        }
+        // Get a valid access token (refresh if necessary)
+        const validToken = await getValidAccessToken(req);
+        console.log('🔍 [SUBSCRIPTION DEBUG] Using valid token for user info...');
         
-        try {
-          const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
-            headers: {
-              'Authorization': `Bearer ${req.session.accessToken}`,
-              'Content-Type': 'application/json'
-            }
-          });
-          console.log('🔍 [SUBSCRIPTION DEBUG] ✅ /me call successful');
-          console.log('🔍 [SUBSCRIPTION DEBUG] User ID:', userResponse.data.id);
-          console.log('🔍 [SUBSCRIPTION DEBUG] User display name:', userResponse.data.displayName);
-        } catch (meError) {
-          console.error('🔍 [SUBSCRIPTION DEBUG] ❌ /me call failed:');
-          console.error('🔍 [SUBSCRIPTION DEBUG] Status:', meError.response?.status);
-          console.error('🔍 [SUBSCRIPTION DEBUG] Error:', meError.response?.data);
-          
-          // Try to get token info instead
-          console.log('🔍 [SUBSCRIPTION DEBUG] Trying to get token info...');
-          try {
-            const tokenInfoResponse = await axios.get('https://graph.microsoft.com/v1.0/me/tokenIssuancePolicy', {
-              headers: {
-                'Authorization': `Bearer ${req.session.accessToken}`,
-                'Content-Type': 'application/json'
-              }
-            });
-            console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Token info call successful');
-          } catch (tokenInfoError) {
-            console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Token info call also failed:');
-            console.error('🔍 [SUBSCRIPTION DEBUG] Status:', tokenInfoError.response?.status);
-            console.error('🔍 [SUBSCRIPTION DEBUG] Error:', tokenInfoError.response?.data);
-          }
-          
-          throw meError;
-        }
-        
+        // Get user info with refreshed token
         const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
           headers: {
-            'Authorization': `Bearer ${req.session.accessToken}`,
+            'Authorization': `Bearer ${validToken}`,
             'Content-Type': 'application/json'
           }
         });
+        
+        console.log('🔍 [SUBSCRIPTION DEBUG] ✅ /me call successful');
+        console.log('🔍 [SUBSCRIPTION DEBUG] User ID:', userResponse.data.id);
+        console.log('🔍 [SUBSCRIPTION DEBUG] User display name:', userResponse.data.displayName);
     
     const user = userResponse.data;
     const userId = user.id;
@@ -729,17 +700,17 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
       console.log('🔍 [SUBSCRIPTION DEBUG] Request Body:', JSON.stringify({ expirationDateTime: newExpirationDateTime }, null, 2));
       console.log('🔍 [SUBSCRIPTION DEBUG] ===========================================');
       
-      try {
-        const updateResponse = await axios.patch(
-          `https://graph.microsoft.com/v1.0/subscriptions/${existingSubscription.subscriptionId}`,
-          { expirationDateTime: newExpirationDateTime },
-          {
-            headers: {
-              'Authorization': `Bearer ${req.session.accessToken}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
+                try {
+            const updateResponse = await axios.patch(
+              `https://graph.microsoft.com/v1.0/subscriptions/${existingSubscription.subscriptionId}`,
+              { expirationDateTime: newExpirationDateTime },
+              {
+                headers: {
+                  'Authorization': `Bearer ${validToken}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
         
         console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Subscription updated successfully!');
         console.log('🔍 [SUBSCRIPTION DEBUG] New expiration:', updateResponse.data.expirationDateTime);
@@ -765,12 +736,12 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
         
         // If update fails, try to delete and create new
         console.log('🔍 [SUBSCRIPTION DEBUG] Update failed, attempting to delete and recreate...');
-        try {
-          await axios.delete(`https://graph.microsoft.com/v1.0/subscriptions/${existingSubscription.subscriptionId}`, {
-            headers: {
-              'Authorization': `Bearer ${req.session.accessToken}`
-            }
-          });
+                    try {
+              await axios.delete(`https://graph.microsoft.com/v1.0/subscriptions/${existingSubscription.subscriptionId}`, {
+                headers: {
+                  'Authorization': `Bearer ${validToken}`
+                }
+              });
           console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Old subscription deleted');
           
           // Delete from database
@@ -813,14 +784,14 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
         console.error('🔍 [SUBSCRIPTION DEBUG] This may cause subscription creation to fail');
       }
       
-      // Create new subscription
-      console.log('🔍 [SUBSCRIPTION DEBUG] Making API call to Microsoft Graph...');
-      const subscriptionResponse = await axios.post('https://graph.microsoft.com/v1.0/subscriptions', requestBody, {
-        headers: {
-          'Authorization': `Bearer ${req.session.accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      });
+                // Create new subscription
+          console.log('🔍 [SUBSCRIPTION DEBUG] Making API call to Microsoft Graph...');
+          const subscriptionResponse = await axios.post('https://graph.microsoft.com/v1.0/subscriptions', requestBody, {
+            headers: {
+              'Authorization': `Bearer ${validToken}`,
+              'Content-Type': 'application/json'
+            }
+          });
       
       const subscription = subscriptionResponse.data;
       console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Subscription created successfully!');
