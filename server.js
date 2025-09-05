@@ -80,7 +80,80 @@ console.log('🔍 [ENV DEBUG] WEBHOOK_SECRET:', WEBHOOK_SECRET ? `${WEBHOOK_SECR
 console.log('🔍 [ENV DEBUG] RAILWAY_PUBLIC_DOMAIN:', process.env.RAILWAY_PUBLIC_DOMAIN || 'UNDEFINED');
 console.log('🔍 [ENV DEBUG] =================================');
 
-// Helper function to get Graph client
+// Helper function to refresh access token
+async function refreshAccessToken(refreshToken) {
+  try {
+    console.log('🔍 [TOKEN DEBUG] Attempting to refresh access token...');
+    const tokenResponse = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+      scope: 'https://graph.microsoft.com/Mail.Read'
+    }, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
+    
+    const { access_token, refresh_token: new_refresh_token } = tokenResponse.data;
+    console.log('🔍 [TOKEN DEBUG] ✅ Token refreshed successfully');
+    return { access_token, refresh_token: new_refresh_token };
+  } catch (error) {
+    console.error('🔍 [TOKEN DEBUG] ❌ Token refresh failed:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+// Helper function to get Graph client with automatic token refresh
+async function getGraphClientWithRefresh(req, res) {
+  let accessToken = req.session.accessToken;
+  
+  try {
+    // First, try to use the current token
+    const graphClient = Client.init({
+      authProvider: (done) => {
+        done(null, accessToken);
+      }
+    });
+    
+    // Test the token by making a simple API call
+    await graphClient.api('/me').get();
+    console.log('🔍 [TOKEN DEBUG] ✅ Current token is valid');
+    return graphClient;
+    
+  } catch (error) {
+    console.log('🔍 [TOKEN DEBUG] ❌ Current token is invalid, attempting refresh...');
+    
+    // If we have a refresh token, try to refresh
+    if (req.session.refreshToken) {
+      try {
+        const { access_token, refresh_token } = await refreshAccessToken(req.session.refreshToken);
+        
+        // Update session with new tokens
+        req.session.accessToken = access_token;
+        req.session.refreshToken = refresh_token;
+        
+        // Create new Graph client with refreshed token
+        return Client.init({
+          authProvider: (done) => {
+            done(null, access_token);
+          }
+        });
+        
+      } catch (refreshError) {
+        console.error('🔍 [TOKEN DEBUG] ❌ Token refresh failed, redirecting to login');
+        // If refresh fails, redirect to login
+        return res.redirect('/login');
+      }
+    } else {
+      console.error('🔍 [TOKEN DEBUG] ❌ No refresh token available, redirecting to login');
+      return res.redirect('/login');
+    }
+  }
+}
+
+// Helper function to get Graph client (legacy - for backward compatibility)
 function getGraphClient(accessToken) {
   return Client.init({
     authProvider: (done) => {
@@ -170,7 +243,8 @@ app.get('/fetch-emails', async (req, res) => {
   }
   
   try {
-    const graphClient = getGraphClient(req.session.accessToken);
+    // Use the new token refresh mechanism
+    const graphClient = await getGraphClientWithRefresh(req, res);
     
     // Fetch the top 10 most recent emails
     const messages = await graphClient
@@ -215,7 +289,8 @@ app.get('/test-subscription', async (req, res) => {
   try {
     console.log('🔍 [TEST DEBUG] Starting subscription creation test...');
     
-    const graphClient = getGraphClient(req.session.accessToken);
+    // Use the new token refresh mechanism
+    const graphClient = await getGraphClientWithRefresh(req, res);
     
     // FORENSIC LOGGING: Access token verification
     const tokenPreview = req.session.accessToken ? 
@@ -331,7 +406,8 @@ app.post('/create-subscription', async (req, res) => {
   }
   
   try {
-    const graphClient = getGraphClient(req.session.accessToken);
+    // Use the new token refresh mechanism
+    const graphClient = await getGraphClientWithRefresh(req, res);
     
     // FORENSIC LOGGING: Access token verification
     const tokenPreview = req.session.accessToken ? 
