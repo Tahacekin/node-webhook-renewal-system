@@ -109,6 +109,13 @@ async function refreshAccessToken(refreshToken) {
 async function getGraphClientWithRefresh(req, res) {
   let accessToken = req.session.accessToken;
   
+  // If no access token, redirect to login immediately
+  if (!accessToken) {
+    console.log('🔍 [TOKEN DEBUG] ❌ No access token in session, redirecting to login');
+    res.redirect('/login');
+    return null;
+  }
+  
   try {
     // First, try to use the current token
     const graphClient = Client.init({
@@ -127,35 +134,59 @@ async function getGraphClientWithRefresh(req, res) {
   } catch (error) {
     console.log('🔍 [TOKEN DEBUG] ❌ Current token is invalid, attempting refresh...');
     console.log('🔍 [TOKEN DEBUG] Error details:', error.message);
+    console.log('🔍 [TOKEN DEBUG] Error status:', error.statusCode);
+    console.log('🔍 [TOKEN DEBUG] Error code:', error.code);
     
     // If we have a refresh token, try to refresh
     if (req.session.refreshToken) {
       try {
+        console.log('🔍 [TOKEN DEBUG] Attempting token refresh...');
         const { access_token, refresh_token } = await refreshAccessToken(req.session.refreshToken);
+        
+        console.log('🔍 [TOKEN DEBUG] ✅ Token refresh successful');
+        console.log('🔍 [TOKEN DEBUG] New access token preview:', access_token ? `${access_token.substring(0, 10)}...${access_token.substring(access_token.length - 10)}` : 'UNDEFINED');
         
         // Update session with new tokens
         req.session.accessToken = access_token;
         req.session.refreshToken = refresh_token;
         
-        // Create new Graph client with refreshed token
-        return Client.init({
+        // Test the new token immediately
+        console.log('🔍 [TOKEN DEBUG] Testing refreshed token...');
+        const newGraphClient = Client.init({
           authProvider: (done) => {
             done(null, access_token);
           }
         });
         
+        const testUserInfo = await newGraphClient.api('/me').get();
+        console.log('🔍 [TOKEN DEBUG] ✅ Refreshed token is valid');
+        console.log('🔍 [TOKEN DEBUG] User info from refreshed token:', JSON.stringify(testUserInfo, null, 2));
+        
+        return newGraphClient;
+        
       } catch (refreshError) {
-        console.error('🔍 [TOKEN DEBUG] ❌ Token refresh failed, redirecting to login');
-        console.error('🔍 [TOKEN DEBUG] Refresh error:', refreshError.message);
-        // If refresh fails, redirect to login
+        console.error('🔍 [TOKEN DEBUG] ❌ Token refresh failed');
+        console.error('🔍 [TOKEN DEBUG] Refresh error status:', refreshError.response?.status);
+        console.error('🔍 [TOKEN DEBUG] Refresh error data:', refreshError.response?.data);
+        console.error('🔍 [TOKEN DEBUG] Refresh error message:', refreshError.message);
+        
+        // Clear invalid tokens from session
+        req.session.accessToken = null;
+        req.session.refreshToken = null;
+        
         res.redirect('/login');
-        return null; // Return null to prevent further execution
+        return null;
       }
     } else {
       console.error('🔍 [TOKEN DEBUG] ❌ No refresh token available, redirecting to login');
       console.error('🔍 [TOKEN DEBUG] This usually means the OAuth scope did not include "offline_access"');
+      
+      // Clear invalid tokens from session
+      req.session.accessToken = null;
+      req.session.refreshToken = null;
+      
       res.redirect('/login');
-      return null; // Return null to prevent further execution
+      return null;
     }
   }
 }
@@ -190,6 +221,54 @@ app.get('/auth-status', (req, res) => {
       'UNDEFINED',
     sessionId: req.sessionID
   });
+});
+
+// Simple test endpoint to test Microsoft Graph API directly
+app.get('/test-graph', async (req, res) => {
+  console.log('🔍 [GRAPH TEST] ===== DIRECT GRAPH API TEST =====');
+  
+  if (!req.session.accessToken) {
+    console.log('🔍 [GRAPH TEST] ❌ No access token, redirecting to login');
+    return res.redirect('/login');
+  }
+  
+  try {
+    console.log('🔍 [GRAPH TEST] Testing direct Graph API call...');
+    console.log('🔍 [GRAPH TEST] Using token:', req.session.accessToken.substring(0, 20) + '...');
+    
+    const graphClient = Client.init({
+      authProvider: (done) => {
+        done(null, req.session.accessToken);
+      }
+    });
+    
+    const user = await graphClient.api('/me').get();
+    console.log('🔍 [GRAPH TEST] ✅ Graph API call successful');
+    console.log('🔍 [GRAPH TEST] User data:', JSON.stringify(user, null, 2));
+    
+    res.json({
+      success: true,
+      message: 'Graph API call successful',
+      user: user
+    });
+    
+  } catch (error) {
+    console.error('🔍 [GRAPH TEST] ❌ Graph API call failed');
+    console.error('🔍 [GRAPH TEST] Error type:', error.constructor.name);
+    console.error('🔍 [GRAPH TEST] Error message:', error.message);
+    console.error('🔍 [GRAPH TEST] Error status:', error.statusCode);
+    console.error('🔍 [GRAPH TEST] Error code:', error.code);
+    console.error('🔍 [GRAPH TEST] Full error:', JSON.stringify(error, null, 2));
+    
+    res.status(500).json({
+      success: false,
+      error: 'Graph API call failed',
+      details: error.message,
+      type: error.constructor.name,
+      status: error.statusCode,
+      code: error.code
+    });
+  }
 });
 
 // Login route - redirects to Microsoft login
