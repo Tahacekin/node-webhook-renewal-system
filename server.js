@@ -3,6 +3,7 @@ const session = require('express-session');
 const { Client } = require('@microsoft/microsoft-graph-client');
 const axios = require('axios');
 const crypto = require('crypto');
+const path = require('path');
 const { Sequelize } = require('sequelize');
 const { Subscription } = require('./models');
 const renewalService = require('./services/renewalService');
