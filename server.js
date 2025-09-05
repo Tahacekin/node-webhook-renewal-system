@@ -708,18 +708,18 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
         console.log('🔍 [SUBSCRIPTION DEBUG] Tokens match:', validToken === req.session.accessToken ? 'YES' : 'NO');
         
         // Test the token first with a simple call
-        console.log('🔍 [SUBSCRIPTION DEBUG] Testing token with basic /me/profile call...');
+        console.log('🔍 [SUBSCRIPTION DEBUG] Testing token with basic /me call...');
         try {
-          const testResponse = await axios.get('https://graph.microsoft.com/v1.0/me/profile', {
+          const testResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
             headers: {
               'Authorization': `Bearer ${validToken}`,
               'Content-Type': 'application/json'
             }
           });
-          console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Basic /me/profile test successful');
+          console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Basic /me test successful');
           console.log('🔍 [SUBSCRIPTION DEBUG] Test response data:', testResponse.data);
         } catch (testError) {
-          console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Basic /me/profile test failed:');
+          console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Basic /me test failed:');
           console.error('🔍 [SUBSCRIPTION DEBUG] Test error status:', testError.response?.status);
           console.error('🔍 [SUBSCRIPTION DEBUG] Test error data:', testError.response?.data);
           console.error('🔍 [SUBSCRIPTION DEBUG] Test error headers:', testError.response?.headers);
@@ -727,7 +727,7 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
         }
         
         // Get user info with refreshed token
-        const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me/profile', {
+        const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
           headers: {
             'Authorization': `Bearer ${validToken}`,
             'Content-Type': 'application/json'

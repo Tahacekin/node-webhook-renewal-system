@@ -16,8 +16,8 @@ class RenewalService {
       return;
     }
 
-    // Run every 30 seconds for testing
-    this.cronJob = cron.schedule('*/30 * * * * *', async () => {
+    // Run every hour
+    this.cronJob = cron.schedule('0 * * * *', async () => {
       console.log('Starting subscription renewal check...');
       await this.checkAndRenewSubscriptions();
     }, {
@@ -27,7 +27,7 @@ class RenewalService {
 
     this.cronJob.start();
     this.isRunning = true;
-    console.log('Renewal service started - will run every 30 seconds for testing');
+    console.log('Renewal service started - will run every hour');
   }
 
   // Stop the renewal service
@@ -39,24 +39,24 @@ class RenewalService {
     }
   }
 
-  // Check for subscriptions that expire in the next 2 minutes and renew them (for testing)
+  // Check for subscriptions that expire in the next 24 hours and renew them
   async checkAndRenewSubscriptions() {
     try {
-      const in2Minutes = new Date();
-      in2Minutes.setMinutes(in2Minutes.getMinutes() + 2); // 2 minutes from now
+      const in24Hours = new Date();
+      in24Hours.setHours(in24Hours.getHours() + 24); // 24 hours from now
 
       const now = new Date();
 
-      // Find subscriptions expiring in the next 2 minutes
+      // Find subscriptions expiring in the next 24 hours
       const expiringSubscriptions = await Subscription.findAll({
         where: {
           expirationDateTime: {
-            [Op.between]: [now, in2Minutes]
+            [Op.between]: [now, in24Hours]
           }
         }
       });
 
-      console.log(`Found ${expiringSubscriptions.length} subscriptions expiring in the next 2 minutes`);
+      console.log(`Found ${expiringSubscriptions.length} subscriptions expiring in the next 24 hours`);
 
       for (const subscription of expiringSubscriptions) {
         try {
@@ -77,9 +77,9 @@ class RenewalService {
     try {
       console.log(`Renewing subscription ${subscription.subscriptionId} for user ${subscription.userId}`);
 
-      // Calculate new expiration date (1 minute from now for testing)
+      // Calculate new expiration date (3 days from now)
       const newExpirationDate = new Date();
-      newExpirationDate.setMinutes(newExpirationDate.getMinutes() + 1);
+      newExpirationDate.setDate(newExpirationDate.getDate() + 3);
 
       // Make PATCH request to Microsoft Graph API
       const response = await axios.patch(
