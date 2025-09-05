@@ -200,6 +200,24 @@ function getGraphClient(accessToken) {
   });
 }
 
+// Authentication middleware
+function requireAuth(req, res, next) {
+  console.log('🔍 [AUTH MIDDLEWARE] ===== AUTHENTICATION CHECK =====');
+  console.log('🔍 [AUTH MIDDLEWARE] Session ID:', req.sessionID);
+  console.log('🔍 [AUTH MIDDLEWARE] Has access token:', !!req.session.accessToken);
+  console.log('🔍 [AUTH MIDDLEWARE] Session data:', JSON.stringify(req.session, null, 2));
+  
+  if (!req.session.accessToken) {
+    console.log('🔍 [AUTH MIDDLEWARE] ❌ No access token found - redirecting to login');
+    console.log('🔍 [AUTH MIDDLEWARE] ======================================');
+    return res.redirect('/login');
+  }
+  
+  console.log('🔍 [AUTH MIDDLEWARE] ✅ User is authenticated - proceeding');
+  console.log('🔍 [AUTH MIDDLEWARE] ======================================');
+  next();
+}
+
 // Part 1: Authentication Routes
 
 // Authentication status check route
@@ -221,6 +239,40 @@ app.get('/auth-status', (req, res) => {
       'UNDEFINED',
     sessionId: req.sessionID
   });
+});
+
+// User status API endpoint for frontend
+app.get('/api/user/status', (req, res) => {
+  console.log('🔍 [USER STATUS] ===== USER STATUS CHECK =====');
+  console.log('🔍 [USER STATUS] Session ID:', req.sessionID);
+  console.log('🔍 [USER STATUS] Has access token:', !!req.session.accessToken);
+  
+  if (!req.session.accessToken) {
+    console.log('🔍 [USER STATUS] ❌ User not authenticated');
+    return res.json({
+      authenticated: false,
+      user: null
+    });
+  }
+  
+  console.log('🔍 [USER STATUS] ✅ User is authenticated');
+  res.json({
+    authenticated: true,
+    user: {
+      hasToken: true,
+      sessionId: req.sessionID
+    }
+  });
+});
+
+// Protected Dashboard Route
+app.get('/dashboard', requireAuth, (req, res) => {
+  console.log('🔍 [DASHBOARD] ===== DASHBOARD ACCESS =====');
+  console.log('🔍 [DASHBOARD] User authenticated, serving dashboard');
+  console.log('🔍 [DASHBOARD] ================================');
+  
+  // Serve the main application page
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Simple test endpoint to test Microsoft Graph API directly
@@ -325,10 +377,32 @@ app.get('/login', (req, res) => {
   res.redirect(authUrl);
 });
 
+// Logout route
+app.post('/logout', (req, res) => {
+  console.log('🔍 [LOGOUT DEBUG] ===== LOGOUT ROUTE TRIGGERED =====');
+  console.log('🔍 [LOGOUT DEBUG] Session ID:', req.sessionID);
+  console.log('🔍 [LOGOUT DEBUG] Session before logout:', JSON.stringify(req.session, null, 2));
+  
+  // Clear the session
+  req.session.destroy((err) => {
+    if (err) {
+      console.error('🔍 [LOGOUT DEBUG] ❌ Error destroying session:', err);
+      return res.status(500).json({ error: 'Logout failed' });
+    }
+    
+    console.log('🔍 [LOGOUT DEBUG] ✅ Session destroyed successfully');
+    console.log('🔍 [LOGOUT DEBUG] ======================================');
+    
+    res.json({ success: true, message: 'Logged out successfully' });
+  });
+});
+
 // Callback route - handles the authorization code exchange
 app.get('/callback', async (req, res) => {
   console.log('🔍 [CALLBACK DEBUG] ===== CALLBACK ROUTE TRIGGERED =====');
   console.log('🔍 [CALLBACK DEBUG] Query params:', JSON.stringify(req.query, null, 2));
+  console.log('🔍 [CALLBACK DEBUG] Session ID:', req.sessionID);
+  console.log('🔍 [CALLBACK DEBUG] Session before token exchange:', JSON.stringify(req.session, null, 2));
   
   const { code, error } = req.query;
   
@@ -380,10 +454,13 @@ app.get('/callback', async (req, res) => {
     req.session.refreshToken = refresh_token;
     
     console.log('🔍 [CALLBACK DEBUG] ✅ Tokens stored in session');
-    console.log('🔍 [CALLBACK DEBUG] Redirecting to home page...');
+    console.log('🔍 [CALLBACK DEBUG] Session after token storage:', JSON.stringify(req.session, null, 2));
+    console.log('🔍 [CALLBACK DEBUG] Session ID after storage:', req.sessionID);
+    console.log('🔍 [CALLBACK DEBUG] Redirecting to dashboard...');
     console.log('🔍 [CALLBACK DEBUG] ======================================');
     
-    res.redirect('/');
+    // Redirect to dashboard instead of home page
+    res.redirect('/dashboard');
   } catch (error) {
     console.error('🔍 [CALLBACK DEBUG] ❌ Token exchange error:');
     console.error('🔍 [CALLBACK DEBUG] Error status:', error.response?.status);
@@ -398,11 +475,7 @@ app.get('/callback', async (req, res) => {
 // Part 2: Manual Email Fetching
 
 // API endpoint to fetch emails
-app.get('/fetch-emails', async (req, res) => {
-  if (!req.session.accessToken) {
-    return res.status(401).json({ error: 'Not authenticated. Please login first.' });
-  }
-  
+app.get('/fetch-emails', requireAuth, async (req, res) => {
   try {
     // Use the new token refresh mechanism
     const graphClient = await getGraphClientWithRefresh(req, res);
@@ -441,16 +514,11 @@ app.get('/fetch-emails', async (req, res) => {
 // Part 3: Webhook Implementation
 
 // Manual test route for debugging subscription creation
-app.get('/test-subscription', async (req, res) => {
+app.get('/test-subscription', requireAuth, async (req, res) => {
   console.log('🔍 [TEST DEBUG] ===== MANUAL SUBSCRIPTION TEST TRIGGERED =====');
   console.log('🔍 [TEST DEBUG] Request from IP:', req.ip);
   console.log('🔍 [TEST DEBUG] User-Agent:', req.get('User-Agent'));
   console.log('🔍 [TEST DEBUG] ==============================================');
-  
-  if (!req.session.accessToken) {
-    console.log('🔍 [TEST DEBUG] ❌ No access token found - redirecting to login');
-    return res.redirect('/login');
-  }
   
   try {
     console.log('🔍 [TEST DEBUG] Starting subscription creation test...');
@@ -559,10 +627,7 @@ app.get('/test-subscription', async (req, res) => {
 });
 
 // Create subscription endpoint
-app.post('/create-subscription', async (req, res) => {
-  if (!req.session.accessToken) {
-    return res.status(401).json({ error: 'Not authenticated. Please login first.' });
-  }
+app.post('/create-subscription', requireAuth, async (req, res) => {
   
   try {
     // Use the new token refresh mechanism
@@ -733,19 +798,22 @@ app.post('/webhook', async (req, res) => {
   res.status(200).json({ success: true });
 });
 
-// Serve the main page
+// Root route - redirect based on authentication status
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/public/index.html');
-});
-
-// Logout route
-app.post('/logout', (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      return res.status(500).json({ error: 'Could not log out' });
-    }
-    res.json({ success: true, message: 'Logged out successfully' });
-  });
+  console.log('🔍 [ROOT DEBUG] ===== ROOT ROUTE TRIGGERED =====');
+  console.log('🔍 [ROOT DEBUG] Session ID:', req.sessionID);
+  console.log('🔍 [ROOT DEBUG] Has access token:', !!req.session.accessToken);
+  console.log('🔍 [ROOT DEBUG] Session data:', JSON.stringify(req.session, null, 2));
+  
+  if (req.session.accessToken) {
+    console.log('🔍 [ROOT DEBUG] ✅ User is authenticated - redirecting to dashboard');
+    console.log('🔍 [ROOT DEBUG] ======================================');
+    res.redirect('/dashboard');
+  } else {
+    console.log('🔍 [ROOT DEBUG] ❌ User not authenticated - serving login page');
+    console.log('🔍 [ROOT DEBUG] ======================================');
+    res.sendFile(__dirname + '/public/index.html');
+  }
 });
 
 // Health check endpoint

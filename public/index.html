@@ -289,19 +289,25 @@
             checkAuthStatus();
         });
         
-        function checkAuthStatus() {
-            // Simple check - in a real app, you'd verify the session server-side
-            fetch('/fetch-emails')
-                .then(response => {
-                    if (response.ok) {
-                        showEmailSection();
-                    } else {
-                        showAuthSection();
-                    }
-                })
-                .catch(() => {
+        async function checkAuthStatus() {
+            console.log('🔍 [FRONTEND] Checking authentication status...');
+            try {
+                const response = await fetch('/api/user/status');
+                const data = await response.json();
+                
+                console.log('🔍 [FRONTEND] Auth status response:', data);
+                
+                if (data.authenticated) {
+                    console.log('🔍 [FRONTEND] ✅ User is authenticated - showing dashboard');
+                    showEmailSection();
+                } else {
+                    console.log('🔍 [FRONTEND] ❌ User not authenticated - showing login');
                     showAuthSection();
-                });
+                }
+            } catch (error) {
+                console.error('🔍 [FRONTEND] Error checking auth status:', error);
+                showAuthSection();
+            }
         }
         
         function showAuthSection() {
