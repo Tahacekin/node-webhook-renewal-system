@@ -707,41 +707,20 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
         console.log('🔍 [SUBSCRIPTION DEBUG] Session access token preview:', req.session.accessToken ? `${req.session.accessToken.substring(0, 20)}...${req.session.accessToken.substring(req.session.accessToken.length - 20)}` : 'NULL');
         console.log('🔍 [SUBSCRIPTION DEBUG] Tokens match:', validToken === req.session.accessToken ? 'YES' : 'NO');
         
-        // Test the token first with a simple call
-        console.log('🔍 [SUBSCRIPTION DEBUG] Testing token with basic /me call...');
-        try {
-          const testResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
-            headers: {
-              'Authorization': `Bearer ${validToken}`,
-              'Content-Type': 'application/json'
-            }
-          });
-          console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Basic /me test successful');
-          console.log('🔍 [SUBSCRIPTION DEBUG] Test response data:', testResponse.data);
-        } catch (testError) {
-          console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Basic /me test failed:');
-          console.error('🔍 [SUBSCRIPTION DEBUG] Test error status:', testError.response?.status);
-          console.error('🔍 [SUBSCRIPTION DEBUG] Test error data:', testError.response?.data);
-          console.error('🔍 [SUBSCRIPTION DEBUG] Test error headers:', testError.response?.headers);
-          throw testError;
-        }
-        
-        // Get user info with refreshed token
-        const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
-          headers: {
-            'Authorization': `Bearer ${validToken}`,
-            'Content-Type': 'application/json'
+        // Use the simple Graph client approach like the working Vercel version
+        console.log('🔍 [SUBSCRIPTION DEBUG] Using Graph client for user info...');
+        const graphClient = Client.init({
+          authProvider: (done) => {
+            done(null, validToken);
           }
         });
         
-        console.log('🔍 [SUBSCRIPTION DEBUG] ✅ /me call successful');
-        console.log('🔍 [SUBSCRIPTION DEBUG] User ID:', userResponse.data.id);
-        console.log('🔍 [SUBSCRIPTION DEBUG] User display name:', userResponse.data.displayName);
-    
-    const user = userResponse.data;
-    const userId = user.id;
-    console.log('🔍 [SUBSCRIPTION DEBUG] User ID:', userId);
-    console.log('🔍 [SUBSCRIPTION DEBUG] User display name:', user.displayName);
+        // Get user info using Graph client (like the working Vercel version)
+        const user = await graphClient.api('/me').get();
+        const userId = user.id;
+        console.log('🔍 [SUBSCRIPTION DEBUG] ✅ User info retrieved successfully');
+        console.log('🔍 [SUBSCRIPTION DEBUG] User ID:', userId);
+        console.log('🔍 [SUBSCRIPTION DEBUG] User display name:', user.displayName);
     
     // Check if user already has an active subscription
     console.log('🔍 [SUBSCRIPTION DEBUG] Checking for existing subscription...');
@@ -763,19 +742,12 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
       console.log('🔍 [SUBSCRIPTION DEBUG] ===========================================');
       
                 try {
-            const updateResponse = await axios.patch(
-              `https://graph.microsoft.com/v1.0/subscriptions/${existingSubscription.subscriptionId}`,
-              { expirationDateTime: newExpirationDateTime },
-              {
-                headers: {
-                  'Authorization': `Bearer ${validToken}`,
-                  'Content-Type': 'application/json'
-                }
-              }
-            );
+            const updateResponse = await graphClient
+              .api(`/subscriptions/${existingSubscription.subscriptionId}`)
+              .patch({ expirationDateTime: newExpirationDateTime });
         
         console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Subscription updated successfully!');
-        console.log('🔍 [SUBSCRIPTION DEBUG] New expiration:', updateResponse.data.expirationDateTime);
+        console.log('🔍 [SUBSCRIPTION DEBUG] New expiration:', updateResponse.expirationDateTime);
         
         // Update database record
         await existingSubscription.update({
@@ -799,11 +771,9 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
         // If update fails, try to delete and create new
         console.log('🔍 [SUBSCRIPTION DEBUG] Update failed, attempting to delete and recreate...');
                     try {
-              await axios.delete(`https://graph.microsoft.com/v1.0/subscriptions/${existingSubscription.subscriptionId}`, {
-                headers: {
-                  'Authorization': `Bearer ${validToken}`
-                }
-              });
+              await graphClient
+                .api(`/subscriptions/${existingSubscription.subscriptionId}`)
+                .delete();
           console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Old subscription deleted');
           
           // Delete from database
@@ -846,16 +816,17 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
         console.error('🔍 [SUBSCRIPTION DEBUG] This may cause subscription creation to fail');
       }
       
-                // Create new subscription
-          console.log('🔍 [SUBSCRIPTION DEBUG] Making API call to Microsoft Graph...');
-          const subscriptionResponse = await axios.post('https://graph.microsoft.com/v1.0/subscriptions', requestBody, {
-            headers: {
-              'Authorization': `Bearer ${validToken}`,
-              'Content-Type': 'application/json'
-            }
-          });
-      
-      const subscription = subscriptionResponse.data;
+                // Create new subscription using Graph client (like working Vercel version)
+          console.log('🔍 [SUBSCRIPTION DEBUG] Creating subscription using Graph client...');
+          const subscription = await graphClient
+            .api('/subscriptions')
+            .post({
+              changeType: 'created',
+              notificationUrl: WEBHOOK_URL,
+              resource: '/me/messages',
+              expirationDateTime: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days
+              clientState: WEBHOOK_SECRET
+            });
       console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Subscription created successfully!');
       console.log('🔍 [SUBSCRIPTION DEBUG] Subscription ID:', subscription.id);
       console.log('🔍 [SUBSCRIPTION DEBUG] Expiration:', subscription.expirationDateTime);
