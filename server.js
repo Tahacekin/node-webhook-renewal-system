@@ -90,7 +90,7 @@ async function refreshAccessToken(refreshToken) {
       client_secret: CLIENT_SECRET,
       refresh_token: refreshToken,
       grant_type: 'refresh_token',
-      scope: 'https://graph.microsoft.com/Mail.Read offline_access'
+      scope: 'https://graph.microsoft.com/Mail.ReadWrite offline_access'
     }, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded'
@@ -369,7 +369,7 @@ app.get('/login', (req, res) => {
     `response_type=code&` +
     `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
     `response_mode=query&` +
-    `scope=https://graph.microsoft.com/Mail.Read offline_access&` +
+    `scope=https://graph.microsoft.com/Mail.ReadWrite offline_access&` +
     `state=12345`;
   
   console.log('🔍 [LOGIN DEBUG] Auth URL:', authUrl);
@@ -430,7 +430,7 @@ app.get('/callback', async (req, res) => {
       code: code,
       grant_type: 'authorization_code',
       redirect_uri: REDIRECT_URI,
-      scope: 'https://graph.microsoft.com/Mail.Read offline_access'
+      scope: 'https://graph.microsoft.com/Mail.ReadWrite offline_access'
     }, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded'
