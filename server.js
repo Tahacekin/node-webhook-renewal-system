@@ -478,36 +478,50 @@ app.get('/callback', async (req, res) => {
 // API endpoint to fetch emails
 app.get('/fetch-emails', requireAuth, async (req, res) => {
   try {
-    // Use the new token refresh mechanism
-    const graphClient = await getGraphClientWithRefresh(req, res);
+    console.log('🔍 [FETCH EMAILS] ===== FETCHING EMAILS =====');
+    console.log('🔍 [FETCH EMAILS] Using direct API approach...');
     
-    // If graphClient is null, it means we redirected to login
-    if (!graphClient) {
-      return; // Exit early, redirect already happened
-    }
+    // Use direct axios call instead of complex token refresh
+    const response = await axios.get('https://graph.microsoft.com/v1.0/me/messages', {
+      headers: {
+        'Authorization': `Bearer ${req.session.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      params: {
+        $select: 'subject,receivedDateTime,from,isRead',
+        $top: 10,
+        $orderby: 'receivedDateTime desc'
+      }
+    });
     
-    // Fetch the top 10 most recent emails
-    const messages = await graphClient
-      .api('/me/messages')
-      .select('subject,receivedDateTime,from,isRead')
-      .top(10)
-      .orderby('receivedDateTime desc')
-      .get();
+    console.log('🔍 [FETCH EMAILS] ✅ Direct API call successful');
+    console.log('🔍 [FETCH EMAILS] Response status:', response.status);
+    console.log('🔍 [FETCH EMAILS] Number of emails:', response.data.value?.length || 0);
+    
+    const emails = response.data.value.map(email => ({
+      subject: email.subject,
+      receivedDateTime: email.receivedDateTime,
+      from: email.from?.emailAddress?.name || 'Unknown',
+      isRead: email.isRead
+    }));
     
     res.json({
       success: true,
-      emails: messages.value.map(email => ({
-        subject: email.subject,
-        receivedDateTime: email.receivedDateTime,
-        from: email.from?.emailAddress?.name || 'Unknown',
-        isRead: email.isRead
-      }))
+      emails: emails
     });
+    
   } catch (error) {
-    console.error('Error fetching emails:', error);
+    console.error('🔍 [FETCH EMAILS] ❌ Error fetching emails:');
+    console.error('🔍 [FETCH EMAILS] Error type:', error.constructor.name);
+    console.error('🔍 [FETCH EMAILS] Error message:', error.message);
+    console.error('🔍 [FETCH EMAILS] Error status:', error.response?.status);
+    console.error('🔍 [FETCH EMAILS] Error data:', error.response?.data);
+    
     res.status(500).json({ 
+      success: false,
       error: 'Failed to fetch emails',
-      details: error.message 
+      details: error.message,
+      status: error.response?.status
     });
   }
 });
