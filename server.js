@@ -118,8 +118,10 @@ async function getGraphClientWithRefresh(req, res) {
     });
     
     // Test the token by making a simple API call
-    await graphClient.api('/me').get();
+    console.log('🔍 [TOKEN DEBUG] Testing token with /me API call...');
+    const userInfo = await graphClient.api('/me').get();
     console.log('🔍 [TOKEN DEBUG] ✅ Current token is valid');
+    console.log('🔍 [TOKEN DEBUG] User info:', JSON.stringify(userInfo, null, 2));
     return graphClient;
     
   } catch (error) {
@@ -478,9 +480,11 @@ app.post('/create-subscription', async (req, res) => {
     
     // Get user info to store with subscription
     console.log('🔍 [SUBSCRIPTION DEBUG] Fetching user info...');
+    console.log('🔍 [SUBSCRIPTION DEBUG] Using Graph client with token:', tokenPreview);
     const user = await graphClient.api('/me').get();
     const userId = user.id;
     console.log('🔍 [SUBSCRIPTION DEBUG] User ID:', userId);
+    console.log('🔍 [SUBSCRIPTION DEBUG] User display name:', user.displayName);
     
     // FORENSIC LOGGING: Request preparation
     const requestBody = {
@@ -498,6 +502,15 @@ app.post('/create-subscription', async (req, res) => {
     console.log('🔍 [SUBSCRIPTION DEBUG] - Content-Type: application/json');
     console.log('🔍 [SUBSCRIPTION DEBUG] Request Body:', JSON.stringify(requestBody, null, 2));
     console.log('🔍 [SUBSCRIPTION DEBUG] ===========================================');
+    
+    // Test webhook URL accessibility
+    console.log('🔍 [SUBSCRIPTION DEBUG] Testing webhook URL accessibility...');
+    try {
+      const webhookTest = await axios.get(WEBHOOK_URL + '?validationToken=test123');
+      console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Webhook URL is accessible, status:', webhookTest.status);
+    } catch (webhookError) {
+      console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Webhook URL test failed:', webhookError.message);
+    }
     
     // Create a subscription for new mail notifications
     console.log('🔍 [SUBSCRIPTION DEBUG] Making API call to Microsoft Graph...');
