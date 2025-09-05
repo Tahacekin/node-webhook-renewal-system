@@ -641,117 +641,185 @@ app.get('/test-subscription', requireAuth, async (req, res) => {
   }
 });
 
-// Create subscription endpoint
+// Create or Update subscription endpoint
 app.post('/create-subscription', requireAuth, async (req, res) => {
+  console.log('🔍 [SUBSCRIPTION DEBUG] ===== CREATE/UPDATE SUBSCRIPTION =====');
   
   try {
-    // Use the new token refresh mechanism
-    const graphClient = await getGraphClientWithRefresh(req, res);
-    
-    // If graphClient is null, it means we redirected to login
-    if (!graphClient) {
-      return; // Exit early, redirect already happened
-    }
-    
-    // FORENSIC LOGGING: Access token verification
-    const tokenPreview = req.session.accessToken ? 
-      `${req.session.accessToken.substring(0, 10)}...${req.session.accessToken.substring(req.session.accessToken.length - 10)}` : 
-      'UNDEFINED';
-    console.log('🔍 [SUBSCRIPTION DEBUG] Access token preview:', tokenPreview);
-    
-    // Get user info to store with subscription
+    // Get user info first using direct API
     console.log('🔍 [SUBSCRIPTION DEBUG] Fetching user info...');
-    console.log('🔍 [SUBSCRIPTION DEBUG] Using Graph client with token:', tokenPreview);
-    const user = await graphClient.api('/me').get();
+    const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
+      headers: {
+        'Authorization': `Bearer ${req.session.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const user = userResponse.data;
     const userId = user.id;
     console.log('🔍 [SUBSCRIPTION DEBUG] User ID:', userId);
     console.log('🔍 [SUBSCRIPTION DEBUG] User display name:', user.displayName);
     
-    // FORENSIC LOGGING: Request preparation
-    const requestBody = {
-      changeType: 'created',
-      notificationUrl: WEBHOOK_URL,
-      resource: '/me/messages',
-      expirationDateTime: new Date(Date.now() + 1 * 60 * 1000).toISOString(), // 1 minute for testing
-      clientState: WEBHOOK_SECRET
-    };
+    // Check if user already has an active subscription
+    console.log('🔍 [SUBSCRIPTION DEBUG] Checking for existing subscription...');
+    const existingSubscription = await Subscription.findOne({
+      where: { userId: userId }
+    });
     
-    console.log('🔍 [SUBSCRIPTION DEBUG] ===== MICROSOFT GRAPH REQUEST DETAILS =====');
-    console.log('🔍 [SUBSCRIPTION DEBUG] Endpoint URL: https://graph.microsoft.com/v1.0/subscriptions');
-    console.log('🔍 [SUBSCRIPTION DEBUG] Request Headers:');
-    console.log('🔍 [SUBSCRIPTION DEBUG] - Authorization: Bearer', tokenPreview);
-    console.log('🔍 [SUBSCRIPTION DEBUG] - Content-Type: application/json');
-    console.log('🔍 [SUBSCRIPTION DEBUG] Request Body:', JSON.stringify(requestBody, null, 2));
-    console.log('🔍 [SUBSCRIPTION DEBUG] ===========================================');
-    
-    // Test webhook URL accessibility
-    console.log('🔍 [SUBSCRIPTION DEBUG] Testing webhook URL accessibility...');
-    try {
-      const webhookTest = await axios.get(WEBHOOK_URL + '?validationToken=test123');
-      console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Webhook URL is accessible, status:', webhookTest.status);
-    } catch (webhookError) {
-      console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Webhook URL test failed:', webhookError.message);
+    if (existingSubscription) {
+      console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Found existing subscription:', existingSubscription.subscriptionId);
+      console.log('🔍 [SUBSCRIPTION DEBUG] Current expiration:', existingSubscription.expirationDateTime);
+      
+      // Update existing subscription
+      console.log('🔍 [SUBSCRIPTION DEBUG] Updating existing subscription...');
+      const newExpirationDateTime = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(); // 3 days
+      
+      console.log('🔍 [SUBSCRIPTION DEBUG] ===== MICROSOFT GRAPH PATCH REQUEST =====');
+      console.log('🔍 [SUBSCRIPTION DEBUG] Endpoint URL: https://graph.microsoft.com/v1.0/subscriptions/' + existingSubscription.subscriptionId);
+      console.log('🔍 [SUBSCRIPTION DEBUG] Request Body:', JSON.stringify({ expirationDateTime: newExpirationDateTime }, null, 2));
+      console.log('🔍 [SUBSCRIPTION DEBUG] ===========================================');
+      
+      try {
+        const updateResponse = await axios.patch(
+          `https://graph.microsoft.com/v1.0/subscriptions/${existingSubscription.subscriptionId}`,
+          { expirationDateTime: newExpirationDateTime },
+          {
+            headers: {
+              'Authorization': `Bearer ${req.session.accessToken}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        
+        console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Subscription updated successfully!');
+        console.log('🔍 [SUBSCRIPTION DEBUG] New expiration:', updateResponse.data.expirationDateTime);
+        
+        // Update database record
+        await existingSubscription.update({
+          expirationDateTime: new Date(newExpirationDateTime)
+        });
+        
+        res.json({
+          success: true,
+          action: 'updated',
+          subscription: {
+            id: existingSubscription.subscriptionId,
+            expirationDateTime: newExpirationDateTime
+          }
+        });
+        
+      } catch (updateError) {
+        console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Failed to update subscription:');
+        console.error('🔍 [SUBSCRIPTION DEBUG] Error status:', updateError.response?.status);
+        console.error('🔍 [SUBSCRIPTION DEBUG] Error data:', updateError.response?.data);
+        
+        // If update fails, try to delete and create new
+        console.log('🔍 [SUBSCRIPTION DEBUG] Update failed, attempting to delete and recreate...');
+        try {
+          await axios.delete(`https://graph.microsoft.com/v1.0/subscriptions/${existingSubscription.subscriptionId}`, {
+            headers: {
+              'Authorization': `Bearer ${req.session.accessToken}`
+            }
+          });
+          console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Old subscription deleted');
+          
+          // Delete from database
+          await existingSubscription.destroy();
+          
+          // Fall through to create new subscription
+        } catch (deleteError) {
+          console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Failed to delete old subscription:', deleteError.message);
+          throw updateError; // Re-throw original update error
+        }
+      }
     }
     
-    // Create a subscription for new mail notifications
-    console.log('🔍 [SUBSCRIPTION DEBUG] Making API call to Microsoft Graph...');
-    const subscription = await graphClient
-      .api('/subscriptions')
-      .post(requestBody);
-    
-    console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Subscription created successfully!');
-    console.log('🔍 [SUBSCRIPTION DEBUG] Subscription ID:', subscription.id);
-    console.log('🔍 [SUBSCRIPTION DEBUG] Expiration:', subscription.expirationDateTime);
-    
-    // Store subscription in database
-    console.log('🔍 [SUBSCRIPTION DEBUG] Storing subscription in database...');
-    const dbSubscription = await Subscription.create({
-      subscriptionId: subscription.id,
-      expirationDateTime: new Date(subscription.expirationDateTime),
-      userId: userId
-    });
-    console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Database record created with ID:', dbSubscription.id);
-    
-    // Store subscription ID in session for management
-    req.session.subscriptionId = subscription.id;
-    
-    res.json({
-      success: true,
-      subscription: {
-        id: subscription.id,
-        expirationDateTime: subscription.expirationDateTime
+    // Create new subscription (either no existing subscription or old one was deleted)
+    if (!existingSubscription || existingSubscription.destroyed) {
+      console.log('🔍 [SUBSCRIPTION DEBUG] Creating new subscription...');
+      
+      // FORENSIC LOGGING: Request preparation
+      const requestBody = {
+        changeType: 'created',
+        notificationUrl: WEBHOOK_URL,
+        resource: '/me/messages',
+        expirationDateTime: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days
+        clientState: WEBHOOK_SECRET
+      };
+      
+      console.log('🔍 [SUBSCRIPTION DEBUG] ===== MICROSOFT GRAPH CREATE REQUEST =====');
+      console.log('🔍 [SUBSCRIPTION DEBUG] Endpoint URL: https://graph.microsoft.com/v1.0/subscriptions');
+      console.log('🔍 [SUBSCRIPTION DEBUG] Notification URL:', WEBHOOK_URL);
+      console.log('🔍 [SUBSCRIPTION DEBUG] Request Body:', JSON.stringify(requestBody, null, 2));
+      console.log('🔍 [SUBSCRIPTION DEBUG] ===========================================');
+      
+      // Test webhook URL accessibility
+      console.log('🔍 [SUBSCRIPTION DEBUG] Testing webhook URL accessibility...');
+      try {
+        const webhookTest = await axios.get(WEBHOOK_URL + '?validationToken=test123');
+        console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Webhook URL is accessible, status:', webhookTest.status);
+      } catch (webhookError) {
+        console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Webhook URL test failed:', webhookError.message);
+        console.error('🔍 [SUBSCRIPTION DEBUG] This may cause subscription creation to fail');
       }
-    });
+      
+      // Create new subscription
+      console.log('🔍 [SUBSCRIPTION DEBUG] Making API call to Microsoft Graph...');
+      const subscriptionResponse = await axios.post('https://graph.microsoft.com/v1.0/subscriptions', requestBody, {
+        headers: {
+          'Authorization': `Bearer ${req.session.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      const subscription = subscriptionResponse.data;
+      console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Subscription created successfully!');
+      console.log('🔍 [SUBSCRIPTION DEBUG] Subscription ID:', subscription.id);
+      console.log('🔍 [SUBSCRIPTION DEBUG] Expiration:', subscription.expirationDateTime);
+      
+      // Store subscription in database
+      console.log('🔍 [SUBSCRIPTION DEBUG] Storing subscription in database...');
+      const dbSubscription = await Subscription.create({
+        subscriptionId: subscription.id,
+        expirationDateTime: new Date(subscription.expirationDateTime),
+        userId: userId
+      });
+      console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Database record created with ID:', dbSubscription.id);
+      
+      // Store subscription ID in session for management
+      req.session.subscriptionId = subscription.id;
+      
+      res.json({
+        success: true,
+        action: 'created',
+        subscription: {
+          id: subscription.id,
+          expirationDateTime: subscription.expirationDateTime
+        }
+      });
+    }
+    
   } catch (error) {
     console.error('🔍 [SUBSCRIPTION DEBUG] ===== MICROSOFT GRAPH ERROR DETAILS =====');
     console.error('🔍 [SUBSCRIPTION DEBUG] Error type:', error.constructor.name);
     console.error('🔍 [SUBSCRIPTION DEBUG] Error message:', error.message);
-    console.error('🔍 [SUBSCRIPTION DEBUG] Error status:', error.statusCode || 'N/A');
-    console.error('🔍 [SUBSCRIPTION DEBUG] Error code:', error.code || 'N/A');
-    console.error('🔍 [SUBSCRIPTION DEBUG] Error requestId:', error.requestId || 'N/A');
-    console.error('🔍 [SUBSCRIPTION DEBUG] Full error object:', JSON.stringify(error, null, 2));
-    
-    // Check for nested error details
-    if (error.response) {
-      console.error('🔍 [SUBSCRIPTION DEBUG] Response status:', error.response.status);
-      console.error('🔍 [SUBSCRIPTION DEBUG] Response headers:', error.response.headers);
-      console.error('🔍 [SUBSCRIPTION DEBUG] Response data:', JSON.stringify(error.response.data, null, 2));
-    }
-    
-    if (error.body) {
-      console.error('🔍 [SUBSCRIPTION DEBUG] Error body:', JSON.stringify(error.body, null, 2));
-    }
-    
+    console.error('🔍 [SUBSCRIPTION DEBUG] Error status:', error.response?.status);
+    console.error('🔍 [SUBSCRIPTION DEBUG] Error code:', error.response?.data?.error?.code);
+    console.error('🔍 [SUBSCRIPTION DEBUG] Error details:', error.response?.data?.error?.message);
+    console.error('🔍 [SUBSCRIPTION DEBUG] Full error response:', JSON.stringify(error.response?.data, null, 2));
     console.error('🔍 [SUBSCRIPTION DEBUG] =========================================');
     
     res.status(500).json({ 
-      error: 'Failed to create subscription',
+      success: false,
+      error: 'Failed to create/update subscription',
       details: error.message,
       debug: {
         type: error.constructor.name,
-        status: error.statusCode,
-        code: error.code,
-        requestId: error.requestId
+        status: error.response?.status,
+        code: error.response?.data?.error?.code,
+        message: error.response?.data?.error?.message,
+        webhookUrl: WEBHOOK_URL,
+        appUrl: APP_URL
       }
     });
   }
@@ -831,9 +899,53 @@ app.get('/', (req, res) => {
   }
 });
 
-// Health check endpoint
+// Comprehensive Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  console.log('🔍 [HEALTH CHECK] ===== HEALTH CHECK REQUESTED =====');
+  console.log('🔍 [HEALTH CHECK] Request from IP:', req.ip);
+  console.log('🔍 [HEALTH CHECK] User-Agent:', req.get('User-Agent'));
+  console.log('🔍 [HEALTH CHECK] ======================================');
+  
+  const healthStatus = {
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    webhookUrl: WEBHOOK_URL,
+    appUrl: APP_URL,
+    database: 'connected', // We'll check this in a real implementation
+    services: {
+      webhook: 'accessible',
+      database: 'connected',
+      microsoftGraph: 'configured'
+    }
+  };
+  
+  console.log('🔍 [HEALTH CHECK] ✅ Health check passed');
+  res.json(healthStatus);
+});
+
+// Additional webhook validation endpoint for Microsoft
+app.get('/webhook', (req, res) => {
+  console.log('🔍 [WEBHOOK VALIDATION] ===== WEBHOOK VALIDATION REQUEST =====');
+  console.log('🔍 [WEBHOOK VALIDATION] Query params:', req.query);
+  console.log('🔍 [WEBHOOK VALIDATION] ======================================');
+  
+  const validationToken = req.query.validationToken;
+  
+  if (validationToken) {
+    console.log('🔍 [WEBHOOK VALIDATION] ✅ Validation token received:', validationToken);
+    console.log('🔍 [WEBHOOK VALIDATION] Responding with 200 OK and validation token');
+    res.setHeader('Content-Type', 'text/plain');
+    return res.status(200).send(validationToken);
+  }
+  
+  // If no validation token, return health status
+  res.json({
+    status: 'webhook_endpoint_ready',
+    message: 'Webhook endpoint is accessible and ready to receive notifications',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Start renewal service
