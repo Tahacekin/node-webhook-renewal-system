@@ -26,6 +26,7 @@ async function getValidAccessToken(req) {
   
   if (!isExpired) {
     console.log('🔍 [TOKEN REFRESH] ✅ Token is still valid');
+    console.log('🔍 [TOKEN REFRESH] Returning token preview:', req.session.accessToken ? `${req.session.accessToken.substring(0, 20)}...${req.session.accessToken.substring(req.session.accessToken.length - 20)}` : 'NULL');
     return req.session.accessToken;
   }
   
@@ -46,7 +47,8 @@ async function getValidAccessToken(req) {
     });
     
     console.log('🔍 [TOKEN REFRESH] ✅ Token refresh successful');
-    console.log('🔍 [TOKEN REFRESH] New access token preview:', refreshResponse.data.access_token.substring(0, 20) + '...');
+    console.log('🔍 [TOKEN REFRESH] New access token preview:', refreshResponse.data.access_token ? `${refreshResponse.data.access_token.substring(0, 20)}...${refreshResponse.data.access_token.substring(refreshResponse.data.access_token.length - 20)}` : 'NULL');
+    console.log('🔍 [TOKEN REFRESH] Refresh response data:', JSON.stringify(refreshResponse.data, null, 2));
     
     // Update session with new tokens
     req.session.accessToken = refreshResponse.data.access_token;
@@ -57,6 +59,7 @@ async function getValidAccessToken(req) {
     req.session.tokenExpiresAt = newExpiresAt.toISOString();
     
     console.log('🔍 [TOKEN REFRESH] New token expires at:', newExpiresAt.toISOString());
+    console.log('🔍 [TOKEN REFRESH] Returning refreshed token preview:', refreshResponse.data.access_token ? `${refreshResponse.data.access_token.substring(0, 20)}...${refreshResponse.data.access_token.substring(refreshResponse.data.access_token.length - 20)}` : 'NULL');
     console.log('🔍 [TOKEN REFRESH] ======================================');
     
     return refreshResponse.data.access_token;
