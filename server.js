@@ -144,11 +144,13 @@ async function getGraphClientWithRefresh(req, res) {
       } catch (refreshError) {
         console.error('🔍 [TOKEN DEBUG] ❌ Token refresh failed, redirecting to login');
         // If refresh fails, redirect to login
-        return res.redirect('/login');
+        res.redirect('/login');
+        return null; // Return null to prevent further execution
       }
     } else {
       console.error('🔍 [TOKEN DEBUG] ❌ No refresh token available, redirecting to login');
-      return res.redirect('/login');
+      res.redirect('/login');
+      return null; // Return null to prevent further execution
     }
   }
 }
@@ -187,6 +189,10 @@ app.get('/auth-status', (req, res) => {
 
 // Login route - redirects to Microsoft login
 app.get('/login', (req, res) => {
+  console.log('🔍 [LOGIN DEBUG] ===== LOGIN ROUTE TRIGGERED =====');
+  console.log('🔍 [LOGIN DEBUG] CLIENT_ID:', CLIENT_ID ? `${CLIENT_ID.substring(0, 8)}...${CLIENT_ID.substring(CLIENT_ID.length - 4)}` : 'UNDEFINED');
+  console.log('🔍 [LOGIN DEBUG] REDIRECT_URI:', REDIRECT_URI);
+  
   const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?` +
     `client_id=${CLIENT_ID}&` +
     `response_type=code&` +
@@ -195,18 +201,35 @@ app.get('/login', (req, res) => {
     `scope=https://graph.microsoft.com/Mail.Read&` +
     `state=12345`;
   
+  console.log('🔍 [LOGIN DEBUG] Auth URL:', authUrl);
+  console.log('🔍 [LOGIN DEBUG] =================================');
+  
   res.redirect(authUrl);
 });
 
 // Callback route - handles the authorization code exchange
 app.get('/callback', async (req, res) => {
+  console.log('🔍 [CALLBACK DEBUG] ===== CALLBACK ROUTE TRIGGERED =====');
+  console.log('🔍 [CALLBACK DEBUG] Query params:', JSON.stringify(req.query, null, 2));
+  
   const { code, error } = req.query;
   
   if (error) {
+    console.error('🔍 [CALLBACK DEBUG] ❌ OAuth error:', error);
     return res.status(400).json({ error: 'Authentication failed', details: error });
   }
   
+  if (!code) {
+    console.error('🔍 [CALLBACK DEBUG] ❌ No authorization code received');
+    return res.status(400).json({ error: 'No authorization code received' });
+  }
+  
   try {
+    console.log('🔍 [CALLBACK DEBUG] Exchanging authorization code for tokens...');
+    console.log('🔍 [CALLBACK DEBUG] CLIENT_ID:', CLIENT_ID ? `${CLIENT_ID.substring(0, 8)}...${CLIENT_ID.substring(CLIENT_ID.length - 4)}` : 'UNDEFINED');
+    console.log('🔍 [CALLBACK DEBUG] CLIENT_SECRET:', CLIENT_SECRET ? `${CLIENT_SECRET.substring(0, 8)}...${CLIENT_SECRET.substring(CLIENT_SECRET.length - 4)}` : 'UNDEFINED');
+    console.log('🔍 [CALLBACK DEBUG] REDIRECT_URI:', REDIRECT_URI);
+    
     // Exchange authorization code for access token
     const tokenResponse = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
       client_id: CLIENT_ID,
@@ -221,16 +244,31 @@ app.get('/callback', async (req, res) => {
       }
     });
     
+    console.log('🔍 [CALLBACK DEBUG] ✅ Token exchange successful');
+    console.log('🔍 [CALLBACK DEBUG] Response status:', tokenResponse.status);
+    
     const { access_token, refresh_token } = tokenResponse.data;
+    
+    console.log('🔍 [CALLBACK DEBUG] Access token preview:', access_token ? `${access_token.substring(0, 10)}...${access_token.substring(access_token.length - 10)}` : 'UNDEFINED');
+    console.log('🔍 [CALLBACK DEBUG] Refresh token preview:', refresh_token ? `${refresh_token.substring(0, 10)}...${refresh_token.substring(refresh_token.length - 10)}` : 'UNDEFINED');
     
     // Store tokens in session
     req.session.accessToken = access_token;
     req.session.refreshToken = refresh_token;
     
+    console.log('🔍 [CALLBACK DEBUG] ✅ Tokens stored in session');
+    console.log('🔍 [CALLBACK DEBUG] Redirecting to home page...');
+    console.log('🔍 [CALLBACK DEBUG] ======================================');
+    
     res.redirect('/');
   } catch (error) {
-    console.error('Token exchange error:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Failed to exchange authorization code' });
+    console.error('🔍 [CALLBACK DEBUG] ❌ Token exchange error:');
+    console.error('🔍 [CALLBACK DEBUG] Error status:', error.response?.status);
+    console.error('🔍 [CALLBACK DEBUG] Error data:', error.response?.data);
+    console.error('🔍 [CALLBACK DEBUG] Error message:', error.message);
+    console.error('🔍 [CALLBACK DEBUG] ======================================');
+    
+    res.status(500).json({ error: 'Token exchange failed', details: error.message });
   }
 });
 
@@ -245,6 +283,11 @@ app.get('/fetch-emails', async (req, res) => {
   try {
     // Use the new token refresh mechanism
     const graphClient = await getGraphClientWithRefresh(req, res);
+    
+    // If graphClient is null, it means we redirected to login
+    if (!graphClient) {
+      return; // Exit early, redirect already happened
+    }
     
     // Fetch the top 10 most recent emails
     const messages = await graphClient
@@ -291,6 +334,11 @@ app.get('/test-subscription', async (req, res) => {
     
     // Use the new token refresh mechanism
     const graphClient = await getGraphClientWithRefresh(req, res);
+    
+    // If graphClient is null, it means we redirected to login
+    if (!graphClient) {
+      return; // Exit early, redirect already happened
+    }
     
     // FORENSIC LOGGING: Access token verification
     const tokenPreview = req.session.accessToken ? 
@@ -408,6 +456,11 @@ app.post('/create-subscription', async (req, res) => {
   try {
     // Use the new token refresh mechanism
     const graphClient = await getGraphClientWithRefresh(req, res);
+    
+    // If graphClient is null, it means we redirected to login
+    if (!graphClient) {
+      return; // Exit early, redirect already happened
+    }
     
     // FORENSIC LOGGING: Access token verification
     const tokenPreview = req.session.accessToken ? 
