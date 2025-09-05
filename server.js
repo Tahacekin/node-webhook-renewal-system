@@ -646,14 +646,64 @@ app.post('/create-subscription', requireAuth, async (req, res) => {
   console.log('🔍 [SUBSCRIPTION DEBUG] ===== CREATE/UPDATE SUBSCRIPTION =====');
   
   try {
-    // Get user info first using direct API
-    console.log('🔍 [SUBSCRIPTION DEBUG] Fetching user info...');
-    const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
-      headers: {
-        'Authorization': `Bearer ${req.session.accessToken}`,
-        'Content-Type': 'application/json'
-      }
-    });
+            // Get user info first using direct API
+        console.log('🔍 [SUBSCRIPTION DEBUG] Fetching user info...');
+        console.log('🔍 [SUBSCRIPTION DEBUG] Testing token with /me endpoint...');
+        
+        // First, let's test if we can access the user's profile
+        console.log('🔍 [SUBSCRIPTION DEBUG] Testing basic user access...');
+        try {
+          const profileResponse = await axios.get('https://graph.microsoft.com/v1.0/me/profile', {
+            headers: {
+              'Authorization': `Bearer ${req.session.accessToken}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Profile call successful');
+        } catch (profileError) {
+          console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Profile call failed:', profileError.response?.status);
+        }
+        
+        try {
+          const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
+            headers: {
+              'Authorization': `Bearer ${req.session.accessToken}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          console.log('🔍 [SUBSCRIPTION DEBUG] ✅ /me call successful');
+          console.log('🔍 [SUBSCRIPTION DEBUG] User ID:', userResponse.data.id);
+          console.log('🔍 [SUBSCRIPTION DEBUG] User display name:', userResponse.data.displayName);
+        } catch (meError) {
+          console.error('🔍 [SUBSCRIPTION DEBUG] ❌ /me call failed:');
+          console.error('🔍 [SUBSCRIPTION DEBUG] Status:', meError.response?.status);
+          console.error('🔍 [SUBSCRIPTION DEBUG] Error:', meError.response?.data);
+          
+          // Try to get token info instead
+          console.log('🔍 [SUBSCRIPTION DEBUG] Trying to get token info...');
+          try {
+            const tokenInfoResponse = await axios.get('https://graph.microsoft.com/v1.0/me/tokenIssuancePolicy', {
+              headers: {
+                'Authorization': `Bearer ${req.session.accessToken}`,
+                'Content-Type': 'application/json'
+              }
+            });
+            console.log('🔍 [SUBSCRIPTION DEBUG] ✅ Token info call successful');
+          } catch (tokenInfoError) {
+            console.error('🔍 [SUBSCRIPTION DEBUG] ❌ Token info call also failed:');
+            console.error('🔍 [SUBSCRIPTION DEBUG] Status:', tokenInfoError.response?.status);
+            console.error('🔍 [SUBSCRIPTION DEBUG] Error:', tokenInfoError.response?.data);
+          }
+          
+          throw meError;
+        }
+        
+        const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
+          headers: {
+            'Authorization': `Bearer ${req.session.accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
     
     const user = userResponse.data;
     const userId = user.id;
