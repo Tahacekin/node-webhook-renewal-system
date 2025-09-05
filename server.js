@@ -236,38 +236,72 @@ app.get('/test-graph', async (req, res) => {
     console.log('🔍 [GRAPH TEST] Testing direct Graph API call...');
     console.log('🔍 [GRAPH TEST] Using token:', req.session.accessToken.substring(0, 20) + '...');
     
-    const graphClient = Client.init({
-      authProvider: (done) => {
-        done(null, req.session.accessToken);
+    // Test with direct axios call first
+    console.log('🔍 [GRAPH TEST] Testing with direct axios call...');
+    const directResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
+      headers: {
+        'Authorization': `Bearer ${req.session.accessToken}`,
+        'Content-Type': 'application/json'
       }
     });
     
-    const user = await graphClient.api('/me').get();
-    console.log('🔍 [GRAPH TEST] ✅ Graph API call successful');
-    console.log('🔍 [GRAPH TEST] User data:', JSON.stringify(user, null, 2));
+    console.log('🔍 [GRAPH TEST] ✅ Direct axios call successful');
+    console.log('🔍 [GRAPH TEST] Response status:', directResponse.status);
+    console.log('🔍 [GRAPH TEST] User data:', JSON.stringify(directResponse.data, null, 2));
     
     res.json({
       success: true,
-      message: 'Graph API call successful',
-      user: user
+      message: 'Direct Graph API call successful',
+      user: directResponse.data,
+      method: 'direct_axios'
     });
     
   } catch (error) {
-    console.error('🔍 [GRAPH TEST] ❌ Graph API call failed');
+    console.error('🔍 [GRAPH TEST] ❌ Direct Graph API call failed');
     console.error('🔍 [GRAPH TEST] Error type:', error.constructor.name);
     console.error('🔍 [GRAPH TEST] Error message:', error.message);
-    console.error('🔍 [GRAPH TEST] Error status:', error.statusCode);
-    console.error('🔍 [GRAPH TEST] Error code:', error.code);
+    console.error('🔍 [GRAPH TEST] Error status:', error.response?.status);
+    console.error('🔍 [GRAPH TEST] Error data:', error.response?.data);
     console.error('🔍 [GRAPH TEST] Full error:', JSON.stringify(error, null, 2));
     
-    res.status(500).json({
-      success: false,
-      error: 'Graph API call failed',
-      details: error.message,
-      type: error.constructor.name,
-      status: error.statusCode,
-      code: error.code
-    });
+    // Try with Microsoft Graph client as fallback
+    try {
+      console.log('🔍 [GRAPH TEST] Trying with Microsoft Graph client...');
+      const graphClient = Client.init({
+        authProvider: (done) => {
+          done(null, req.session.accessToken);
+        }
+      });
+      
+      const user = await graphClient.api('/me').get();
+      console.log('🔍 [GRAPH TEST] ✅ Graph client call successful');
+      
+      res.json({
+        success: true,
+        message: 'Graph client call successful',
+        user: user,
+        method: 'graph_client'
+      });
+      
+    } catch (clientError) {
+      console.error('🔍 [GRAPH TEST] ❌ Graph client also failed');
+      console.error('🔍 [GRAPH TEST] Client error:', clientError.message);
+      
+      res.status(500).json({
+        success: false,
+        error: 'Both direct and client calls failed',
+        directError: {
+          message: error.message,
+          status: error.response?.status,
+          data: error.response?.data
+        },
+        clientError: {
+          message: clientError.message,
+          status: clientError.statusCode,
+          code: clientError.code
+        }
+      });
+    }
   }
 });
 
@@ -421,29 +455,35 @@ app.get('/test-subscription', async (req, res) => {
   try {
     console.log('🔍 [TEST DEBUG] Starting subscription creation test...');
     
-    // Use the new token refresh mechanism
-    const graphClient = await getGraphClientWithRefresh(req, res);
+    // Try direct approach first - bypass complex token refresh
+    console.log('🔍 [TEST DEBUG] Testing direct Graph API approach...');
     
-    // If graphClient is null, it means we redirected to login
-    if (!graphClient) {
-      return; // Exit early, redirect already happened
-    }
+    // Test user info first
+    const userResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
+      headers: {
+        'Authorization': `Bearer ${req.session.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
     
-    // FORENSIC LOGGING: Access token verification
-    const tokenPreview = req.session.accessToken ? 
-      `${req.session.accessToken.substring(0, 10)}...${req.session.accessToken.substring(req.session.accessToken.length - 10)}` : 
-      'UNDEFINED';
-    console.log('🔍 [TEST DEBUG] Access token preview:', tokenPreview);
-    
-    // Get user info to store with subscription
-    console.log('🔍 [TEST DEBUG] Fetching user info...');
-    const user = await graphClient.api('/me').get();
+    console.log('🔍 [TEST DEBUG] ✅ Direct user API call successful');
+    const user = userResponse.data;
     const userId = user.id;
     console.log('🔍 [TEST DEBUG] User ID:', userId);
     console.log('🔍 [TEST DEBUG] User display name:', user.displayName);
     
-    // FORENSIC LOGGING: Request preparation
-    const requestBody = {
+    // Test webhook URL accessibility
+    console.log('🔍 [TEST DEBUG] Testing webhook URL accessibility...');
+    try {
+      const webhookTest = await axios.get(WEBHOOK_URL + '?validationToken=test123');
+      console.log('🔍 [TEST DEBUG] ✅ Webhook URL is accessible, status:', webhookTest.status);
+    } catch (webhookError) {
+      console.error('🔍 [TEST DEBUG] ❌ Webhook URL test failed:', webhookError.message);
+    }
+    
+    // Create subscription using direct API call
+    console.log('🔍 [TEST DEBUG] Creating subscription with direct API call...');
+    const subscriptionData = {
       changeType: 'created',
       notificationUrl: WEBHOOK_URL,
       resource: '/me/messages',
@@ -451,42 +491,37 @@ app.get('/test-subscription', async (req, res) => {
       clientState: WEBHOOK_SECRET
     };
     
-    console.log('🔍 [TEST DEBUG] ===== MICROSOFT GRAPH REQUEST DETAILS =====');
-    console.log('🔍 [TEST DEBUG] Endpoint URL: https://graph.microsoft.com/v1.0/subscriptions');
-    console.log('🔍 [TEST DEBUG] Request Headers:');
-    console.log('🔍 [TEST DEBUG] - Authorization: Bearer', tokenPreview);
-    console.log('🔍 [TEST DEBUG] - Content-Type: application/json');
-    console.log('🔍 [TEST DEBUG] Request Body:', JSON.stringify(requestBody, null, 2));
-    console.log('🔍 [TEST DEBUG] ===========================================');
+    console.log('🔍 [TEST DEBUG] Subscription data:', JSON.stringify(subscriptionData, null, 2));
     
-    // Create a subscription for new mail notifications
-    console.log('🔍 [TEST DEBUG] Making API call to Microsoft Graph...');
-    const subscription = await graphClient
-      .api('/subscriptions')
-      .post(requestBody);
+    const subscriptionResponse = await axios.post('https://graph.microsoft.com/v1.0/subscriptions', subscriptionData, {
+      headers: {
+        'Authorization': `Bearer ${req.session.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
     
     console.log('🔍 [TEST DEBUG] ✅ Subscription created successfully!');
-    console.log('🔍 [TEST DEBUG] Subscription ID:', subscription.id);
-    console.log('🔍 [TEST DEBUG] Expiration:', subscription.expirationDateTime);
+    console.log('🔍 [TEST DEBUG] Subscription ID:', subscriptionResponse.data.id);
+    console.log('🔍 [TEST DEBUG] Expiration:', subscriptionResponse.data.expirationDateTime);
     
     // Store subscription in database
     console.log('🔍 [TEST DEBUG] Storing subscription in database...');
     const dbSubscription = await Subscription.create({
-      subscriptionId: subscription.id,
-      expirationDateTime: new Date(subscription.expirationDateTime),
+      subscriptionId: subscriptionResponse.data.id,
+      expirationDateTime: new Date(subscriptionResponse.data.expirationDateTime),
       userId: userId
     });
     console.log('🔍 [TEST DEBUG] ✅ Database record created with ID:', dbSubscription.id);
     
     // Store subscription ID in session for management
-    req.session.subscriptionId = subscription.id;
+    req.session.subscriptionId = subscriptionResponse.data.id;
     
     res.json({
       success: true,
-      message: 'Subscription created successfully via test route',
+      message: 'Subscription created successfully via direct API call',
       subscription: {
-        id: subscription.id,
-        expirationDateTime: subscription.expirationDateTime
+        id: subscriptionResponse.data.id,
+        expirationDateTime: subscriptionResponse.data.expirationDateTime
       },
       user: {
         id: userId,
@@ -495,40 +530,27 @@ app.get('/test-subscription', async (req, res) => {
       debug: {
         webhookUrl: WEBHOOK_URL,
         appUrl: APP_URL,
-        clientId: CLIENT_ID ? `${CLIENT_ID.substring(0, 8)}...${CLIENT_ID.substring(CLIENT_ID.length - 4)}` : 'UNDEFINED'
+        method: 'direct_api'
       }
     });
+    
   } catch (error) {
-    console.error('🔍 [TEST DEBUG] ===== MICROSOFT GRAPH ERROR DETAILS =====');
+    console.error('🔍 [TEST DEBUG] ===== DIRECT API ERROR DETAILS =====');
     console.error('🔍 [TEST DEBUG] Error type:', error.constructor.name);
     console.error('🔍 [TEST DEBUG] Error message:', error.message);
-    console.error('🔍 [TEST DEBUG] Error status:', error.statusCode || 'N/A');
-    console.error('🔍 [TEST DEBUG] Error code:', error.code || 'N/A');
-    console.error('🔍 [TEST DEBUG] Error requestId:', error.requestId || 'N/A');
-    console.error('🔍 [TEST DEBUG] Full error object:', JSON.stringify(error, null, 2));
-    
-    // Check for nested error details
-    if (error.response) {
-      console.error('🔍 [TEST DEBUG] Response status:', error.response.status);
-      console.error('🔍 [TEST DEBUG] Response headers:', error.response.headers);
-      console.error('🔍 [TEST DEBUG] Response data:', JSON.stringify(error.response.data, null, 2));
-    }
-    
-    if (error.body) {
-      console.error('🔍 [TEST DEBUG] Error body:', JSON.stringify(error.body, null, 2));
-    }
-    
-    console.error('🔍 [TEST DEBUG] =========================================');
+    console.error('🔍 [TEST DEBUG] Error status:', error.response?.status);
+    console.error('🔍 [TEST DEBUG] Error data:', error.response?.data);
+    console.error('🔍 [TEST DEBUG] Full error:', JSON.stringify(error, null, 2));
+    console.error('🔍 [TEST DEBUG] ======================================');
     
     res.status(500).json({ 
       success: false,
-      error: 'Failed to create subscription via test route',
+      error: 'Failed to create subscription via direct API call',
       details: error.message,
       debug: {
         type: error.constructor.name,
-        status: error.statusCode,
-        code: error.code,
-        requestId: error.requestId,
+        status: error.response?.status,
+        data: error.response?.data,
         webhookUrl: WEBHOOK_URL,
         appUrl: APP_URL
       }
