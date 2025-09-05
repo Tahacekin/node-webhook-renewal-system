@@ -11,7 +11,8 @@ const db = {};
 
 let sequelize;
 if (process.env.DATABASE_URL) {
-  // Production (Railway) - use DATABASE_URL
+  // Production (Railway/Render) - use DATABASE_URL
+  console.log('Using DATABASE_URL for production');
   sequelize = new Sequelize(process.env.DATABASE_URL, {
     dialect: 'postgres',
     logging: false,
@@ -23,8 +24,10 @@ if (process.env.DATABASE_URL) {
     }
   });
 } else if (config.use_env_variable) {
+  console.log('Using config.use_env_variable');
   sequelize = new Sequelize(process.env[config.use_env_variable], config);
 } else {
+  console.log('Using config object');
   sequelize = new Sequelize(config.database, config.username, config.password, config);
 }
 
