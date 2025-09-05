@@ -89,7 +89,7 @@ async function refreshAccessToken(refreshToken) {
       client_secret: CLIENT_SECRET,
       refresh_token: refreshToken,
       grant_type: 'refresh_token',
-      scope: 'https://graph.microsoft.com/Mail.Read'
+      scope: 'https://graph.microsoft.com/Mail.Read offline_access'
     }, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded'
@@ -124,6 +124,7 @@ async function getGraphClientWithRefresh(req, res) {
     
   } catch (error) {
     console.log('🔍 [TOKEN DEBUG] ❌ Current token is invalid, attempting refresh...');
+    console.log('🔍 [TOKEN DEBUG] Error details:', error.message);
     
     // If we have a refresh token, try to refresh
     if (req.session.refreshToken) {
@@ -143,12 +144,14 @@ async function getGraphClientWithRefresh(req, res) {
         
       } catch (refreshError) {
         console.error('🔍 [TOKEN DEBUG] ❌ Token refresh failed, redirecting to login');
+        console.error('🔍 [TOKEN DEBUG] Refresh error:', refreshError.message);
         // If refresh fails, redirect to login
         res.redirect('/login');
         return null; // Return null to prevent further execution
       }
     } else {
       console.error('🔍 [TOKEN DEBUG] ❌ No refresh token available, redirecting to login');
+      console.error('🔍 [TOKEN DEBUG] This usually means the OAuth scope did not include "offline_access"');
       res.redirect('/login');
       return null; // Return null to prevent further execution
     }
@@ -198,7 +201,7 @@ app.get('/login', (req, res) => {
     `response_type=code&` +
     `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
     `response_mode=query&` +
-    `scope=https://graph.microsoft.com/Mail.Read&` +
+    `scope=https://graph.microsoft.com/Mail.Read offline_access&` +
     `state=12345`;
   
   console.log('🔍 [LOGIN DEBUG] Auth URL:', authUrl);
@@ -237,7 +240,7 @@ app.get('/callback', async (req, res) => {
       code: code,
       grant_type: 'authorization_code',
       redirect_uri: REDIRECT_URI,
-      scope: 'https://graph.microsoft.com/Mail.Read'
+      scope: 'https://graph.microsoft.com/Mail.Read offline_access'
     }, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded'
@@ -251,6 +254,11 @@ app.get('/callback', async (req, res) => {
     
     console.log('🔍 [CALLBACK DEBUG] Access token preview:', access_token ? `${access_token.substring(0, 10)}...${access_token.substring(access_token.length - 10)}` : 'UNDEFINED');
     console.log('🔍 [CALLBACK DEBUG] Refresh token preview:', refresh_token ? `${refresh_token.substring(0, 10)}...${refresh_token.substring(refresh_token.length - 10)}` : 'UNDEFINED');
+    
+    // Check if refresh token is available
+    if (!refresh_token) {
+      console.warn('🔍 [CALLBACK DEBUG] ⚠️ No refresh token received - this may cause issues with token renewal');
+    }
     
     // Store tokens in session
     req.session.accessToken = access_token;
